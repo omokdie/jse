@@ -1,0 +1,6 @@
+Basic Pitch model — model.json, group1-shard1of1.bin (unmodified)
+Copyright 2022 Spotify AB. Licensed under the Apache License, Version 2.0 (see LICENSE in this folder).
+Source: https://github.com/spotify/basic-pitch-ts (model/). Paper: Bittner et al., "A Lightweight Instrument-Agnostic
+Model for Polyphonic Note Transcription and Multipitch Estimation", ICASSP 2022.
+JSE runs it with its own JavaScript interpreter (app/js/audio/tfgraph.js); app/js/audio/basicpitch.js contains a
+port of basic-pitch-ts src/inference.ts and src/toMidi.ts.

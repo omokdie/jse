@@ -33,6 +33,7 @@ app/                     the web application (what every platform ships)
     omr/omr.js           image → RecognitionResult (pure JS, runs in a Web Worker)
     omr/*.js             OMR stages (preprocess, dewarp, staves, barlines, heads, classifiers, lyrics/hangul)
     omr/worker.js        worker wrapper around omr.js
+    audio/*.js           audio → score (Basic Pitch interpreter, beat/key/quantize) — §4b
     io/ssnap.js          .ssnap container read/write (JSZip)
     io/musicxml.js       MusicXML import/export (.xml/.musicxml/.mxl)
     io/musx.js           Finale .musx/.ftmx import (§5b)
@@ -227,6 +228,27 @@ flags, dots, ties, accidentals, rests, barlines (single/double/final/repeat), ch
 (stacked noteheads). Lyrics/chord text are optional (if detected, attach to nearest event).
 Low-confidence measures get `measure.source.confidence < 0.6` so the UI can highlight them.
 Everything it cannot read becomes rests of the correct total length so measures stay valid.
+
+---------------------------------------------------------------------------------
+## 4b. Audio → score (`app/js/audio/*`, dialog `app/js/ui/audioflow.js`)
+
+```js
+// app/js/audio/engine.js — AudioTranscriber: decode(blob) → analyze(onProgress) → transcribe(opts); cancel()
+// app/js/audio/basicpitch.js — new BasicPitch(loadGraph(modelJson, weights)).evaluate(mono22050) → post
+//   (pure-JS interpreter for the Basic Pitch TF.js graph, tfgraph.js; WASM-SIMD conv kernel wasmconv.js, JS fallback)
+// app/js/audio/transcribe.js — pure, runs in Worker and Node
+transcribe(post, opts) → { score: ScoreDoc, notes, qnotes, beats, bpm, key:{fifths,mode,tonic}, timeSig, mode,
+                           pickupBeats, stats:{notes, polyphony, ms, measures, duration}, warnings: string[] }
+// post: { nFrames, note: Float32Array(nFrames·88), onset: Float32Array(nFrames·88) }  (Basic Pitch posteriorgrams)
+// opts: { mode:'auto'|'melody'|'piano', timeSig:'auto'|'4/4'|'3/4'|'2/4'|'6/8', bpm:null|number, grid:16|8,
+//         triplets, chords, keyFifths, title, notes (cached extraction for re-quantising), tuned }
+```
+Decoding uses the browser's `decodeAudioData` (MP3/M4A/OGG/WAV/FLAC) → mono 22,050 Hz. Output ScoreDoc: one part
+`voice` (treble / treble8vb / bass clef by range) or `piano` (grand staff split around C4); measure 0 has timeSig,
+keySig, tempo (6/8: dotted quarter) and `pickup: true` for an anacrusis; chord symbols in `measure.chords`;
+triplets as `tuplet {num:3, den:2}`. Re-quantising (tempo ÷2/×2, BPM, meter, grid, mode) reuses the network output.
+Model: `app/vendor/basic-pitch/` (Spotify Basic Pitch, Apache-2.0, NOTICE), 917 KB, lazy-loaded.
+Tuning/eval data: Finale pieces rendered to audio (`tools/audio/`, see its README).
 
 ---------------------------------------------------------------------------------
 ## 5. MusicXML module contract (`app/js/io/musicxml.js`)

@@ -120,6 +120,7 @@ export const ICONS = {
   open: ui(`<path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3.2l2 2H18a2.5 2.5 0 0 1 2.5 2.5v.5H8.4a2 2 0 0 0-1.9 1.4L4 19z" ${tint}/><path d="M3.5 18V7.5A2.5 2.5 0 0 1 6 5h3.2l2 2H18a2.5 2.5 0 0 1 2.5 2.5V10"/><path d="M4 19l2.5-7.6A2 2 0 0 1 8.4 10H21l-2.6 7.7a2 2 0 0 1-1.9 1.3z"/>`),
   save: ui(`<path d="M5 5.5A2.5 2.5 0 0 1 7.5 3h8.8L20 6.7v11.8a2.5 2.5 0 0 1-2.5 2.5h-10A2.5 2.5 0 0 1 5 18.5z" ${tint}/><path d="M8.5 3v4.5h6V3M8 21v-6.5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1V21"/>`),
   camera: ui(`<path d="M3.5 8.5A2.5 2.5 0 0 1 6 6h1.8l1.6-2.2h5.2L16.2 6H18a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 20H6a2.5 2.5 0 0 1-2.5-2.5z" ${tint}/><circle cx="12" cy="12.8" r="3.6"/><circle cx="17.3" cy="9" r=".9" ${solid}/>`),
+  audio: ui(`<path d="M3 13.5v-3M6.5 16v-8M10 18.5v-13M13.5 15v-6" /><path d="M17.5 17.2V6.5l3.5-1v3l-3.5 1" ${tint}/><ellipse cx="16" cy="17.4" rx="2" ry="1.6" ${solid}/>`),
   scan: ui(`<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="10" height="10" rx="2" ${tint} stroke="none"/><path d="M7.5 10h9M7.5 12h9M7.5 14h9" stroke-width="1.1" opacity=".7"/><ellipse cx="11" cy="14.3" rx="1.5" ry="1.1" transform="rotate(-20 11 14.3)" ${solid}/><path d="M12.4 14V9" stroke-width="1.3"/>`),
   image: ui(`<rect x="3" y="4.5" width="18" height="15" rx="3" ${tint}/><circle cx="8.5" cy="9.5" r="1.7"/><path d="m21 15.5-4.6-4.6a1.5 1.5 0 0 0-2.1 0L6 19.3"/>`),
   undo: ui('<path d="M8.5 13.5 4 9l4.5-4.5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),

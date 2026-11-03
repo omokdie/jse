@@ -55,6 +55,7 @@ export class UI {
     this.el.left.classList.add('glass'); this.el.right.classList.add('glass');
     this.el.left.innerHTML = '<div class="palette-host" style="display:flex;flex-direction:column;flex:1;min-height:0"></div><div class="navigator"><div class="panel-head" style="padding:0 2px 8px"><span>페이지</span><span class="sub" data-pages></span></div><div class="thumbs"></div></div>';
     const fab = document.createElement('button'); fab.className = 'fab'; fab.title = t('scan'); fab.innerHTML = icon('scan'); fab.addEventListener('click', () => this.scan()); this.el.main.appendChild(fab); this.fab = fab;
+    const fabAudio = document.createElement('button'); fabAudio.className = 'fab secondary'; fabAudio.title = '음원으로 악보 만들기'; fabAudio.innerHTML = icon('audio'); fabAudio.addEventListener('click', () => this.audio()); this.el.main.appendChild(fabAudio); this.fabAudio = fabAudio;   // audio → score
     const peek = document.createElement('div'); peek.className = 'source-peek glass'; peek.hidden = true; this.el.main.appendChild(peek); this.peek = peek;
     const reviewBar = document.createElement('div'); reviewBar.className = 'review-bar glass'; reviewBar.hidden = true; this.el.main.appendChild(reviewBar); this.reviewBar = reviewBar;
     if (window.innerWidth < 1180) this.el.body.classList.add('hide-right');
@@ -94,7 +95,7 @@ export class UI {
     const T = (id) => TOOLS.find(t => t.id === id);
     rail.innerHTML = btn('tool:select', T('select').icon, T('select').label, T('select').key) + btn('tool:entry', T('entry').icon, T('entry').label, T('entry').key)
       + '<span class="rail-sep"></span>' + groups.map(g => groupHTML(g, 'rail')).join('') + btn('tool:measure', T('measure').icon, T('measure').label, '')
-      + '<span class="rail-sep"></span>' + btn('tool:piano', 'piano', '피아노 건반', '') + btn('tool:scan', 'scan', '사진으로 인식', '') + '<span class="rail-flex"></span>' + btn('panel:left', 'sidebarLeft', '기호 팔레트 패널', '') + btn('panel:right', 'sidebarRight', '속성 패널', '');
+      + '<span class="rail-sep"></span>' + btn('tool:piano', 'piano', '피아노 건반', '') + btn('tool:scan', 'scan', '사진으로 인식', '') + btn('tool:audio', 'audio', '음원으로 악보 만들기', '') + '<span class="rail-flex"></span>' + btn('panel:left', 'sidebarLeft', '기호 팔레트 패널', '') + btn('panel:right', 'sidebarRight', '속성 패널', '');
     rail.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => this.railAction(b.dataset.tool)));
     bindGroups(rail, groups, { placement: 'right' });
     this.updateRail(true);
@@ -112,6 +113,7 @@ export class UI {
     switch (id) {
       case 'tool:piano': this.piano.toggle(); this.updateRail(); break;
       case 'tool:scan': this.scan(); break;
+      case 'tool:audio': this.audio(); break;
       case 'panel:left': this.action('toggleLeft'); this.updateRail(); break;
       case 'panel:right': this.action('toggleRight'); this.updateRail(); break;
     }
@@ -183,7 +185,7 @@ export class UI {
       <div class="ob-context">${ctx}</div>
       <div class="spacer"></div>
       ${G('', B('play', icon(this.player?.playing ? 'pause' : 'play'), `${t('play')} (Space · Space+클릭: 그 마디부터)`, { on: !!this.player?.playing }) + B('stop', icon('stop'), t('stop')) + B('metronome', icon('metronome'), t('metronome'), { on: !!this.player?.metronome }))}
-      <div class="ob-group ob-actions"><button class="tb-btn primary" data-ob="scan" title="사진·이미지·PDF에서 악보 인식">${icon('scan')}<span>사진으로 인식</span></button><button class="tb-btn" data-ob="export" title="${t('export')} (Ctrl+Shift+E)">${icon('export')}<span>내보내기</span></button></div>
+      <div class="ob-group ob-actions"><button class="tb-btn primary" data-ob="scan" title="사진·이미지·PDF에서 악보 인식">${icon('scan')}<span>사진으로 인식</span></button><button class="tb-btn" data-ob="audio" title="MP3·WAV 등 음원을 듣고 악보 만들기">${icon('audio')}<span>음원으로 악보</span></button><button class="tb-btn" data-ob="export" title="${t('export')} (Ctrl+Shift+E)">${icon('export')}<span>내보내기</span></button></div>
     </div>`;
     bar.querySelectorAll('[data-ob]').forEach(b => b.addEventListener('click', () => this.optionAction(b.dataset.ob, b)));
     bindGroups(bar, groups, { placement: 'below' });
@@ -238,6 +240,7 @@ export class UI {
       case 'stop': this.player.stop(); break;
       case 'metronome': this.action('metronome'); this.renderOptionsBar(); break;
       case 'scan': this.scan(); break;
+      case 'audio': this.audio(); break;
       case 'export': this.exportDialog(); break;
     }
     void el;
@@ -347,7 +350,7 @@ export class UI {
     });
   }
   fileSheet() {
-    const items = [['new', 'new', t('new')], ['scan', 'scan', '사진으로 인식'], ['open', 'open', t('open')], ['save', 'save', t('save')], ['saveAs', 'save', t('saveAs')], ['export', 'export', t('export')], ['share', 'share', '공유'], ['meta', 'pencil', '제목/작곡가'], ['instruments', 'sliders', '악기(파트)'], ['pageSetup', 'pageSingle', '페이지 설정'], ['transpose', 'refresh', '조옮김'], ['shortcuts', 'keyboard', '단축키'], ['settings', 'settings', '설정'], ['about', 'info', '정보']];
+    const items = [['new', 'new', t('new')], ['scan', 'scan', '사진으로 인식'], ['audio', 'audio', '음원으로 악보'], ['open', 'open', t('open')], ['save', 'save', t('save')], ['saveAs', 'save', t('saveAs')], ['export', 'export', t('export')], ['share', 'share', '공유'], ['meta', 'pencil', '제목/작곡가'], ['instruments', 'sliders', '악기(파트)'], ['pageSetup', 'pageSingle', '페이지 설정'], ['transpose', 'refresh', '조옮김'], ['shortcuts', 'keyboard', '단축키'], ['settings', 'settings', '설정'], ['about', 'info', '정보']];
     showSheet('파일 · 악보', `<div class="cards" style="padding:4px 14px 18px">${items.map(([a, ic, lb]) => `<button class="card" data-a="${a}">${icon(ic)}<b>${lb}</b></button>`).join('')}</div>`, (sh, close) => sh.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', () => { close(); this.action(b.dataset.a); })));
   }
 
@@ -438,7 +441,7 @@ export class UI {
     const input = this.app.mode === 'input';
     this.updateRail?.();
     document.getElementById('app').classList.toggle('input-mode', input);
-    this.fab.hidden = input;
+    this.fab.hidden = input; if (this.fabAudio) this.fabAudio.hidden = input;
     this.view.updateSelection();
   }
   updateStatus() {
@@ -543,6 +546,7 @@ export class UI {
         { label: t('new'), icon: 'new', key: 'Ctrl+N', onClick: () => this.action('new') },
         { label: t('open') + '…', icon: 'open', key: 'Ctrl+O', onClick: () => this.action('open') },
         { label: '사진·PDF로 악보 인식…', icon: 'scan', onClick: () => this.action('scan') },
+        { label: '음원으로 악보 만들기…', icon: 'audio', onClick: () => this.action('audio') },
         { label: '최근 파일…', icon: 'file', onClick: () => this.action('recent') },
         { label: '예제 악보 열기', icon: 'score', onClick: () => this.action('example') },
         { sep: true },
@@ -687,6 +691,7 @@ export class UI {
       case 'stop': this.player.stop(); break;
       case 'metronome': this.player.metronome = !this.player.metronome; this.scheduleOptions(); this.toast(this.player.metronome ? '메트로놈 켬' : '메트로놈 끔'); break;
       case 'scan': this.scan(); break;
+      case 'audio': this.audio(); break;
       case 'export': this.exportDialog(); break;
       case 'update': if (this.updater.status.state === 'ready') this.updater.install(); else this.updater.check(true); break;
       case 'settings': D.settingsDialog(app, this); break;
@@ -717,6 +722,7 @@ export class UI {
       case 'mobileMenu': this.fileSheet(); break;
       case 'mobileMore': showMenu(0, 0, [
         { label: '사진으로 인식', icon: 'scan', onClick: () => this.scan() },
+        { label: '음원으로 악보 만들기', icon: 'audio', onClick: () => this.audio() },
         { label: t('export'), icon: 'export', onClick: () => this.exportDialog() },
         { label: t('save'), icon: 'save', onClick: () => this.save() },
         { label: '피아노 건반', icon: 'piano', onClick: () => this.piano.toggle() },
@@ -1089,6 +1095,7 @@ export class UI {
   newScoreDialog() { return this.action('new'); }
   exportDialog(fmt) { return exportDialog(this.app, this, fmt); }
   scan(opts = {}) { return scanDialog(this.app, this, opts); }
+  audio(opts = {}) { return import('./audioflow.js').then(m => m.audioDialog(this.app, this, opts)); }
 
   // ---------------------------------------------------------------- files
   async confirmDiscard() {
@@ -1096,12 +1103,14 @@ export class UI {
     return D.confirmDialog('저장하지 않은 변경', '현재 악보에 저장하지 않은 변경사항이 있습니다. 계속하면 현재 악보는 닫힙니다(자동 저장본은 덮어씁니다). 계속할까요?', '계속');
   }
   async openFile() {
-    const files = await pickFiles({ accept: '.ssnap,.musx,.ftmx,.musicxml,.xml,.mxl,.json,image/*,.pdf,application/pdf', multiple: true });
+    const files = await pickFiles({ accept: '.ssnap,.musx,.ftmx,.musicxml,.xml,.mxl,.json,image/*,.pdf,application/pdf,audio/*,.mp3,.m4a,.wav,.ogg,.flac', multiple: true });
     if (files.length) this.openFiles(files);
   }
   async openFiles(files) {
     // images & PDFs go to the scanner together; the first score file opens
     const kinds = await Promise.all(files.map(async f => ({ ...f, kind: sniffFile(f.name, await f.blob.slice(0, 4096).arrayBuffer()) })));
+    const audios = files.filter(f => /\.(mp3|m4a|mp4|aac|wav|wave|ogg|oga|opus|flac|webm|weba|aif|aiff|caf|amr|3gp)$/i.test(f.name || '') || /^audio\//.test(f.blob?.type || ''));
+    if (audios.length && !kinds.some(f => f.kind === 'image' || f.kind === 'pdf')) { this.audio({ files: audios }); return; }
     const scans = kinds.filter(f => f.kind === 'image' || f.kind === 'pdf');
     if (scans.length) { this.scan({ files: scans }); return; }
     const f = kinds[0]; if (!f) return;
@@ -1242,6 +1251,7 @@ export class UI {
     const v = await D.showDialog({ title: 'JSE에 오신 것을 환영합니다', wide: false, body: `<p>악보 사진을 찍으면 편집할 수 있는 악보로 바꿔 드립니다. 무엇부터 해볼까요?</p>
       <div class="cards welcome-cards">
         <button class="card" data-v="scan">${icon('scan')}<b>사진으로 악보 만들기</b><span>카메라·이미지·PDF 인식</span></button>
+        <button class="card" data-v="audio">${icon('audio')}<b>음원으로 악보 만들기</b><span>MP3·WAV를 듣고 받아 적기</span></button>
         <button class="card" data-v="new">${icon('new')}<b>새 악보 쓰기</b><span>멜로디·피아노·기타·드럼</span></button>
         <button class="card" data-v="open">${icon('open')}<b>파일 열기</b><span>.ssnap · Finale(.musx) · MusicXML</span></button>
         <button class="card" data-v="example">${icon('score')}<b>예제 둘러보기</b><span>가사·코드가 있는 악보</span></button>

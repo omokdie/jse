@@ -148,7 +148,7 @@ export function shortcutsDialog() {
   return showDialog({ title: t('shortcuts') + ' — 피날레 방식', wide: true, body: `<div class="shortcuts">${body}</div>` });
 }
 export function aboutDialog(version) {
-  return showDialog({ title: 'JSE 정보', body: `<p><b>JSE</b> v${version} — 악보 사진 인식 · 편집 · 내보내기</p><p>음악 기호 글꼴: GNU FreeSerif (GPLv3 + 글꼴 예외) · 압축: JSZip (MIT) · PDF: pdf-lib (MIT)</p><p>파일 형식 <code>.ssnap</code>은 ZIP 컨테이너이며 <code>score.json</code>과 원본 사진을 담습니다. MusicXML로 다른 프로그램과 주고받을 수 있습니다.</p>` });
+  return showDialog({ title: 'JSE 정보', body: `<p><b>JSE</b> v${version} — 악보 사진 인식 · 편집 · 내보내기</p><p>음악 기호 글꼴: GNU FreeSerif (GPLv3 + 글꼴 예외) · 압축: JSZip (MIT) · PDF: pdf-lib (MIT) · 음원 인식 모델: Basic Pitch (Spotify, Apache-2.0)</p><p>파일 형식 <code>.ssnap</code>은 ZIP 컨테이너이며 <code>score.json</code>과 원본 사진을 담습니다. MusicXML로 다른 프로그램과 주고받을 수 있습니다.</p>` });
 }
 export async function timeSigDialog(app, mi) {
   const ts = app.score.measures[mi]?.timeSig || { num: 4, den: 4 };

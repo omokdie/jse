@@ -1,5 +1,5 @@
 {
   "_comment": "Release metadata merged into the published version.json (see RELEASING.md). androidMinNative: raise it to the current version whenever the Android NATIVE code (mobile/android) changed in a way the OTA web bundle cannot carry — devices below it are offered the APK instead. notes: shown in the in-app update prompt.",
   "androidMinNative": "1.0.0",
-  "notes": "사진 인식 2차 학습: 실제 곡 1,373곡과 음악 글꼴 5종으로 학습, 쉼표·임시표·음자리표·박자표 인식 모델 추가 — 처음 보는 사진 정확도 음높이 약 54%→71%, 박자 57%→66%, 조표·박자표 인식 크게 개선. 한국어 가사 인식을 한글 글꼴 26종으로 다시 학습. 피날레 파일의 셈여림·표현 글자가 잘못 표시되던 문제 수정."
+  "notes": "새 기능: 음원(MP3·M4A·WAV 등)으로 악보 만들기 — 멜로디/피아노/자동, 빠르기·박자·조성 자동 인식, 코드 기호, 원음과 비교하며 바로 다시 정리. 앱 안에서 실행되어 인터넷이 필요 없습니다."
 }
