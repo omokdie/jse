@@ -13,7 +13,7 @@
 | 4 | 복사·붙여넣기, 여러 페이지 한눈에 보기 등 편의 기능 | ✅ 보기 5종, 범위 끌어서 복사, 반복, 자동저장 등 |
 | 5 | 모바일: 같은 파일, 모바일에 맞는 UI | ✅ 휴대폰·**태블릿**·PC 화면 자동 전환 (`native.js classifyLayout`) |
 | 6 | 인터넷 연결 시 자동 업데이트 + 완료 표시 | ✅ 웹(테스트 통과) · Windows(electron-updater, GitHub Releases) · Android(웹 번들 OTA) |
-| 7 | Windows 설치형 exe, Android apk | ✅ GitHub Actions에서 실제 빌드 성공 (v1.0.0: exe 84MB, apk 5MB) |
+| 7 | Windows 설치형 exe, Android apk | ✅ GitHub Actions에서 실제 빌드 성공 (exe 84MB, apk 5MB, 최신 v1.0.2) |
 | 8 | 가사·기타 코드·드럼 악보 등 모든 요소 편집 | ✅ |
 | 9 | 리퀴드 글라스 UI, 아이콘 직접 그리기 | ✅ |
 | 10 | 창 최소화/최대화/닫기 버튼 | ✅ |
@@ -25,7 +25,7 @@
 | 16 | 쉼표 종류별 입력 | ✅ 팔레트·옵션 바·휴대폰 입력 바 모두 |
 | 17 | 사진 인식에서 한국어 가사 읽기 | ✅ `omr/lyrics.js` + `omr/hangul.js` (§4) |
 | 18 | 여러 사진으로 학습해 인식 정확도 개선 | 🔶 개선됨(사진 52→61%), 목표 80%에는 미달 (§4) |
-| 19 | GitHub 설정 | ✅ 저장소·Pages·Actions·Android 서명 키(Secrets) 완료 |
+| 19 | GitHub 설정 | ✅ 저장소·Pages·Actions, 릴리스 v1.0.0~v1.0.2 / 🔶 Android 서명 키 Secrets가 아직 빌드에 전달 안 됨(사용자 확인 중 — 고쳐지면 다음 main push 때 APK만 자동 재빌드) |
 
 결정 사항: 확장자는 `.ssnap` 유지(`.jse`는 Windows JScript 확장자라 사용 불가). 저장소는 공개(무료 Pages + 자동 업데이트에 필요).
 
