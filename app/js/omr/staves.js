@@ -220,6 +220,20 @@ export function detectStavesV2(ctx, options = {}) {
     if (!joined) sys++;
     sysOf[i] = sys;
   }
+  // grand staves by layout: on blurred / low-resolution photos the brace and the system's left barline
+  // are often too faint for the connector test, and every staff became its own system (each piano
+  // system read as two unrelated staves).  An even number of staves whose gaps alternate — small
+  // inside a pair, clearly larger between pairs, the same on the whole page — are paired.
+  if (options.parts !== 1 && !options.assumeGrandStaff && staves.length >= 4 && staves.length % 2 === 0) {
+    const xc = (a, b) => clamp(rnd((Math.max(a.x0, b.x0) + Math.min(a.x1, b.x1)) / 2), 0, w - 1);
+    const gaps = [];
+    for (let i = 1; i < staves.length; i++) { const a = staves[i - 1], b = staves[i]; const x = xc(a, b); gaps.push(b.lines[0][x] - a.lines[4][x]); }
+    const inner = gaps.filter((g, i) => i % 2 === 0), outer = gaps.filter((g, i) => i % 2 === 1);
+    const pairsNow = staves.every((st, i) => sysOf[i] === sysOf[i - (i % 2)] && (i % 2 === 0 || sysOf[i] !== sysOf[i - 2]));
+    if (!pairsNow && Math.max(...inner) < 14 * sp && Math.max(...inner) * 1.35 < Math.min(...outer)) {
+      for (let i = 0; i < staves.length; i++) sysOf[i] = i >> 1;
+    }
+  }
   staves.forEach((s, i) => { s.systemIndex = sysOf[i]; s.index = i; });
   return staves;
 }

@@ -49,9 +49,16 @@ export function keySigPositions(fifths, clef) {
   if (fifths > 0) return k.sharps.slice(0, fifths).map(p => ({ pos: p, acc: 'sharp' }));
   return k.flats.slice(0, -fifths).map(p => ({ pos: p, acc: 'flat' }));
 }
+/** Horizontal step between key-signature accidentals: 1 sp, or the glyph's width + 0.1 sp for music
+ * fonts with wider accidentals (e.g. Petaluma's 1.65 sp sharp) — the app's own font keeps 1 sp. */
+export function keySigStep(acc) {
+  const g = GLYPHS[acc === 'sharp' ? 'accidentalSharp' : acc === 'natural' ? 'accidentalNatural' : 'accidentalFlat'];
+  const w = g && g.w ? g.w : 1;
+  return w > 1.05 ? w + 0.1 : 1.0;
+}
 export function keySigWidth(fifths, clef, prevFifths) {
   const n = Math.abs(fifths);
-  let w = n ? n * 1.0 + 0.4 : 0;
+  let w = n ? n * keySigStep(fifths > 0 ? 'sharp' : 'flat') + 0.4 : 0;
   if (!n && prevFifths) w = Math.abs(prevFifths) * 0.95 + 0.4;   // cancellation naturals
   return w;
 }

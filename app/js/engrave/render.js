@@ -1,7 +1,7 @@
 // Engraver: ScoreDoc → pages of SVG (+ geometry for hit testing).
 import { staffList, effectiveTimeSig, effectiveKeySig, effectiveClef, durTicks, measureCapacity, findEvent } from '../model/score.js';
 import { GLYPHS } from './glyphs.js';
-import { SP, annotateScore, breakSystems, slotPositions, keySigPositions, headWidthFor } from './layout.js';
+import { SP, annotateScore, breakSystems, slotPositions, keySigPositions, keySigStep, headWidthFor } from './layout.js';
 import { Frag, f3, renderStaffMeasure } from './notes.js';
 import { textWidth, escapeXml, prettyChord, TEXT_FONT } from './text.js';
 
@@ -387,7 +387,7 @@ function drawKeySig(frag, fifths, clef, x, prevFifths) {
     for (const p of keySigPositions(prevFifths, clef)) { frag.use('accidentalNatural', cx, p.pos / 2, 1, 'keysig'); cx += 0.95; }
     return;
   }
-  for (const p of keySigPositions(fifths, clef)) { frag.use(p.acc === 'sharp' ? 'accidentalSharp' : 'accidentalFlat', cx, p.pos / 2, 1, 'keysig'); cx += 1.0; }
+  for (const p of keySigPositions(fifths, clef)) { frag.use(p.acc === 'sharp' ? 'accidentalSharp' : 'accidentalFlat', cx, p.pos / 2, 1, 'keysig'); cx += keySigStep(p.acc); }
 }
 function drawTimeSig(frag, ts, x, sh) {
   if (ts.display === 'common') { frag.use('timeSigCommon', x, sh / 2, 1, 'timesig'); return; }

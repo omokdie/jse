@@ -17,7 +17,7 @@ import { TEMPLATES } from './templates.js';
 import { buildTrace } from './trace.js';
 import { frontEnd } from './frontend.js';
 import { detectBarlinesV2 } from './barlines.js';
-import { learnedHeads, wholeNoteEvents } from './heads.js';
+import { learnedHeads, wholeNoteEvents, inkLevels } from './heads.js';
 import { makeGlyphHook } from './glyphs.js';
 import { learnedBeamCount, N_RFEAT } from './rhythm.js';
 import { loadModel, predict as mlpPredict } from './classifiers.js';
@@ -807,6 +807,7 @@ function classifyInner(ctx, staves, nolines, prims, options, warnings, symbols) 
   const headsOk = heads.filter(hd => hd.cx > hd.staff.headerEnd - 0.2 * sp && hd.cx < hd.staff.x1 + sp);
   for (const hd of heads) hd._drop = headsOk.includes(hd) ? null : 'header';      // diagnostics (trace)
   associateHeads(ctx, usable, headsOk);
+  if (prims.learned && !options.legacyPreprocess && options.virtualStems !== false) virtualStems(ctx, nolines, usable, headsOk, systems);
   for (const hd of headsOk) if (!hd.stem) hd._drop = 'nostem';
   // hollow heads on stems that have no filled head, and stemless whole notes
   // (learned heads already carry filled / half / whole)
@@ -929,6 +930,59 @@ function ledgerOk(ctx, st, hd) {
 
 /** Assigns heads to stems (normal side first, then flipped "second" heads)
  * and derives the stem direction from which end carries heads. */
+/** Photos: a confident filled / half head without a stem usually has one that the binarisation broke
+ * into short pieces (blurred low-resolution photos lose ~17 % of their heads this way).  The column
+ * at the head's stem side is followed with small gaps allowed; a run of ≥ 2.3 sp becomes a stem
+ * (chord heads on the same column share it). */
+function virtualStems(ctx, nolines, usable, heads, systems) {
+  const { w, h, sp } = ctx;
+  const gapMax = Math.max(2, Math.round(0.35 * sp)), minLen = 2.3 * sp, maxLen = 6 * sp;
+  const ink = (x, y) => x >= 0 && y >= 0 && x < w && y < h && nolines[y * w + x] === 1;
+  // a faint stem the binarisation lost: the column is clearly darker than both columns 2 px away
+  const g = ctx.gray, lv = inkLevels(ctx), dth = Math.max(8, 0.12 * (lv.paper - lv.ink));
+  const faint = (x, y) => x >= 2 && y >= 0 && x < w - 2 && y < h && g[y * w + x] + dth < Math.min(g[y * w + x - 2], g[y * w + x + 2]);
+  // run from y0 in direction d (±1) at column x: [length, end y] with gaps ≤ gapMax
+  const follow = (x, y0, d) => {
+    let y = y0, last = y0, gap = 0;
+    for (let k = 0; k < maxLen; k++, y += d) {
+      const on = ink(x, y) || ink(x - 1, y) || ink(x + 1, y) || faint(x, y) || faint(x - 1, y) || faint(x + 1, y);
+      if (on) { last = y; gap = 0; } else if (++gap > gapMax) break;
+    }
+    return [Math.abs(last - y0), last];
+  };
+  const bars = [];
+  for (const sys of systems) if (sys) for (const b of sys.barlines || []) bars.push(b.x);
+  const made = [];
+  for (const hd of heads) {
+    if (hd.stem || !hd.learned || hd.cls === 3 || (hd.prob ?? 0) < 0.8) continue;
+    let best = null;
+    // up-stem: right edge of the head, going up; down-stem: left edge, going down
+    for (const [dir, xa, xb, d] of [['up', hd.x1 - 0.3 * sp, hd.x1 + 0.15 * sp, -1], ['down', hd.x0 - 0.15 * sp, hd.x0 + 0.3 * sp, 1]]) {
+      for (let x = Math.round(xa); x <= Math.round(xb); x++) {
+        const [len, end] = follow(x, Math.round(hd.cy), d);
+        if (len >= minLen && (!best || len > best.len)) best = { dir, x, len, end };
+      }
+    }
+    if (!best || bars.some(bx => Math.abs(bx - best.x) < 0.6 * sp)) continue;
+    // the run must be a thin line somewhere along it (not a beam or a blob; the middle of a chord's
+    // stem runs through its other heads): the narrowest of several sample rows ≤ 0.5 sp
+    let thin = false;
+    for (const f of [0.35, 0.55, 0.75, 0.9]) {
+      const ym = Math.round(hd.cy + f * (best.end - hd.cy));
+      let wl = 0, wr = 0;
+      while (wl < sp && ink(best.x - wl - 1, ym)) wl++;
+      while (wr < sp && ink(best.x + wr + 1, ym)) wr++;
+      if (wl + wr + 1 <= 0.5 * sp) { thin = true; break; }
+    }
+    if (!thin) continue;
+    const y0 = best.dir === 'up' ? best.end : Math.round(hd.cy), y1 = best.dir === 'up' ? Math.round(hd.cy) : best.end;
+    let st = made.find(o => o.dir === best.dir && Math.abs(o.x - best.x) <= 0.3 * sp && o.staff === hd.staff && Math.min(o.y1, y1) - Math.max(o.y0, y0) > -1.2 * sp);
+    if (!st) { st = { x: best.x, x0: best.x, x1: best.x, y0, y1, width: 1, staff: hd.staff, heads: [], dir: best.dir, virtual: true }; made.push(st); usable.push(st); }
+    else { st.y0 = Math.min(st.y0, y0); st.y1 = Math.max(st.y1, y1); }
+    st.heads.push(hd); hd.stem = st;
+  }
+}
+
 function associateHeads(ctx, stems, heads) {
   const { sp } = ctx;
   const off = 0.57 * sp, tol = 0.4 * sp;
@@ -1016,10 +1070,17 @@ function findWholeNotes(ctx, nolines, cc, staves, stems, heads) {
 
 function attachDotsAndAccidentals(ctx, events, comps, used) {
   const { sp, w } = ctx;
+  // (photos: a blurred dot can bridge to the staff line above or below it — the line pixels next to a
+  // symbol are kept by the line removal — and the component is then up to ~1.4 sp tall)
+  const crossesLine = (c, st) => {
+    if (!st) return false;
+    const xi = clamp(rnd(c.cx), 0, w - 1);
+    return st.lines.some(L => L[xi] >= c.y0 - 0.1 * sp && L[xi] <= c.y1 + 0.1 * sp);
+  };
   for (const c of comps) {
     const wsp = c.w / sp, hsp = c.h / sp;
     const fill = c.area / (c.w * c.h);
-    if (wsp >= 0.22 && wsp <= 0.7 && hsp >= 0.22 && hsp <= 0.7 && fill > 0.55) {
+    if (wsp >= 0.22 && wsp <= (ctx.photoPipe ? 0.8 : 0.7) && hsp >= 0.22 && hsp <= (ctx.photoPipe ? 1.55 : 0.7) && fill > 0.55) {
       // augmentation dot: right of a head (or rest), roughly at its height
       let best = null;
       for (const ev of events) {
@@ -1029,8 +1090,9 @@ function attachDotsAndAccidentals(ctx, events, comps, used) {
           if (dx > 0.1 * sp && dx < 1.4 * sp && Math.abs(dy) < 0.8 * sp && (!best || dx < best.dx)) best = { ev, dx };
         }
       }
-      if (best) { best.ev.dots = 1; used.add(c.id); }
-      continue;
+      const tallOk = (hsp <= 0.7 && wsp <= 0.7) || (wsp >= 0.4 && best && crossesLine(c, best.ev.staff));
+      if (best && tallOk) { best.ev.dots = 1; used.add(c.id); continue; }
+      if (hsp <= 0.7 && wsp <= 0.7) continue;
     }
     // (the learned classifier knows several music fonts: wider size window)
     if (glyphHook ? (hsp >= 1.5 && hsp <= 3.8 && wsp >= 0.35 && wsp <= 1.9) : (hsp >= 1.8 && hsp <= 3.4 && wsp >= 0.45 && wsp <= 1.4)) {
@@ -1186,6 +1248,26 @@ function detectHeader(ctx, st, cc, options, warnings) {
         clefComp = { id: best.ids[0], x0: u.x0, x1: u.x1, y0: u.y0, y1: u.y1, w: u.x1 - u.x0 + 1, h: u.y1 - u.y0 + 1, area: u.area };
         clefIds = best.ids;
       }
+      // photos: windows at the staff start (all pieces of a broken clef together; or a clef left of a
+      // staff start that was detected too far right) — classified as one shape
+      if (!clefComp && nol && ctx.photoPipe) {
+        let bw = null;
+        for (const [a, b] of [[-0.3, 3.0], [-3.2, 0.3], [-0.3, 2.4]]) {
+          const box = inkBox(Math.round(st.x0 + a * sp), Math.round(st.x0 + b * sp), Math.round(top - 2.5 * sp), Math.round(bottom + 2.5 * sp));
+          if (!box || box.y1 - box.y0 + 1 < 2.4 * sp || box.x1 - box.x0 + 1 < 1.0 * sp || box.x1 - box.x0 + 1 > 3.6 * sp) continue;
+          if (Math.min(box.y1, bottom) - Math.max(box.y0, top) < 1.5 * sp) continue;
+          const q = glyphHook.probs(box);
+          const nm = clefOf(q);
+          if (q[nm] >= 0.65 && (!bw || q[nm] > bw.p)) bw = { box, name: nm, p: q[nm] };
+        }
+        if (bw) {
+          const b = bw.box;
+          clefComp = { id: -1, x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, w: b.x1 - b.x0 + 1, h: b.y1 - b.y0 + 1 };
+          clefPick = { c: clefComp, name: bw.name, p: bw.p * 0.9 };
+          // (the pieces inside the window belong to the clef)
+          clefIds = inHeader.filter(c => c.x0 >= b.x0 && c.x1 <= b.x1 && c.y0 >= b.y0 && c.y1 <= b.y1).map(c => c.id);
+        }
+      }
       // nothing better: the size rule on the first tall shape the classifier does not read as another
       // glyph, as a weak vote (a clef that falls apart into pieces — e.g. thin alto clefs — leaves only
       // its curved half; a rehearsal box before a real clef is outvoted by the other staves)
@@ -1286,7 +1368,9 @@ function detectHeader(ctx, st, cc, options, warnings) {
 function readKeyLearned(ctx, st, inHeader, x) {
   const { sp, w, h } = ctx;
   const nol = ctx.nolines;
-  let sharps = 0, flats = 0, lastX = x, type = null, confSum = 0;
+  let sharps = 0, flats = 0, lastX = x, type = null, confSum = 0, accW = 0;   // (accW: summed width of the counted units)
+  const xs = [];                                                                  // left edges of single counted accidentals
+  let tailCounted = false;
   const inkBox = (x0, x1, y0, y1) => {
     // tight ink box of the line-free image inside a window
     let a = Infinity, b = -1, c = Infinity, d = -1;
@@ -1347,7 +1431,7 @@ function readKeyLearned(ctx, st, inHeader, x) {
       if (tail && tail.y1 - tail.y0 >= 1.5 * sp && tail.y1 - tail.y0 <= 4.0 * sp) {
         const u = { ...tail, w: tail.x1 - tail.x0 + 1, h: tail.y1 - tail.y0 + 1 };
         const r = classifyUnit(u);
-        if (r.n && r.pn >= 0.6) count(r);
+        if (r.n && r.pn >= 0.6) { count(r); tailCounted = true; }
       }
     }
   }
@@ -1357,8 +1441,11 @@ function readKeyLearned(ctx, st, inHeader, x) {
   for (const c of inHeader) {
     const u = units[units.length - 1];
     const narrow = (q) => q.x1 - q.x0 + 1 < 0.45 * sp;
-    if (u && c.x0 >= u.x0 && c.x0 <= u.x1 + 0.34 * sp && narrow(u) && Math.max(u.x1, c.x1) - u.x0 + 1 <= 1.35 * sp) {
-      u.x1 = Math.max(u.x1, c.x1); u.y0 = Math.min(u.y0, c.y0); u.y1 = Math.max(u.y1, c.y1);
+    // (or a piece stacked on it: a thin sharp cut in two by a staff line — same columns, small gap)
+    const ovx = u ? Math.min(u.x1, c.x1) - Math.max(u.x0, c.x0) + 1 : 0;
+    const stacked = u && ovx >= 0.6 * Math.min(u.w, c.w) && c.y0 - u.y1 <= 0.5 * sp && u.y0 - c.y1 <= 0.5 * sp && u.h < 1.5 * sp && c.h < 1.5 * sp && Math.max(u.y1, c.y1) - Math.min(u.y0, c.y0) + 1 <= 3.6 * sp;
+    if (u && ((c.x0 >= u.x0 && c.x0 <= u.x1 + 0.34 * sp && narrow(u) && Math.max(u.x1, c.x1) - u.x0 + 1 <= 1.35 * sp) || stacked)) {
+      u.x0 = Math.min(u.x0, c.x0); u.x1 = Math.max(u.x1, c.x1); u.y0 = Math.min(u.y0, c.y0); u.y1 = Math.max(u.y1, c.y1);
       u.w = u.x1 - u.x0 + 1; u.h = u.y1 - u.y0 + 1; u.area += c.area; u.ids.push(c.id);
       continue;
     }
@@ -1375,11 +1462,50 @@ function readKeyLearned(ctx, st, inHeader, x) {
     // (merged runs of accidentals at different heights are up to ~6 sp tall)
     if (hsp < 1.5 || hsp > (wsp > 1.25 ? 6.3 : 4.6) || wsp < 0.35 || wsp > 7.5) break;
     const r = classifyUnit(c);
-    if (!r.n) break;
+    if (!r.n) {
+      // the last accidentals blurred together (or into the time signature / the first note): after a
+      // run of accidentals of one kind the unit is cut at the run's own step (key-signature accidentals
+      // are evenly spaced) and each piece is classified on its own
+      const nRun = sharps + flats;
+      if (type && nol && nRun && c.x0 <= lastX + 0.8 * sp) {
+        const step = xs.length >= 2 ? (xs[xs.length - 1] - xs[0]) / (xs.length - 1) : accW / nRun;
+        const wa = Math.min(accW / nRun, step + 0.15 * sp);
+        if (step >= 0.6 * sp && c.w > 1.3 * wa) {
+          for (let j = 0; j < 7 && sharps + flats < 7; j++) {
+            const xa = Math.round(c.x0 + j * step), xb = Math.round(xa + wa);
+            if (xa > c.x1 - 0.5 * sp) break;
+            const core = inkBox(Math.round(xa + 0.2 * wa), Math.round(xb - 0.2 * wa), c.y0, c.y1);
+            if (!core || core.y1 - core.y0 + 1 < 1.5 * sp) break;
+            const u = { x0: xa, x1: Math.min(xb, c.x1), y0: core.y0, y1: core.y1 };
+            u.w = u.x1 - u.x0 + 1; u.h = u.y1 - u.y0 + 1;
+            const q = glyphHook.probs(u);
+            if (!(q[type] >= 0.7 && q[type] >= q.none)) break;
+            count({ n: 1, acc: type, pn: q[type] * 0.9 }); lastX = u.x1; x = u.x1 + 0.2 * sp;
+          }
+        }
+      }
+      break;
+    }
     if (type && r.acc !== type) break;
     count(r);
+    accW += c.w; if (r.n === 1) xs.push(c.x0);
     st.headerLabels.push(...c.ids); lastX = c.x1; x = c.x1 + 0.2 * sp;
     if (sharps + flats >= 7) break;
+  }
+  // the first accidental blurred into a too-wide clef and the tail cut failed: one step before the
+  // first counted accidental (the run's own spacing) lies inside the clef component
+  if (cb && nol && ctx.photoPipe && !tailCounted && type && xs.length >= 2 && sharps + flats < 7) {
+    const maxW = { treble: 3.15, bass: 3.35, alto: 3.4 }[st.clef] || 3.3;
+    const step = (xs[xs.length - 1] - xs[0]) / (xs.length - 1), wa = Math.min(accW / (sharps + flats), step + 0.15 * sp);
+    const xa = Math.round(xs[0] - step), xb = Math.round(xa + wa);
+    if (cb.w > maxW * sp && xa > cb.x0 + 2.1 * sp && xb <= cb.x1 + 0.3 * sp) {
+      const core = inkBox(Math.round(xa + 0.2 * wa), Math.round(xb - 0.2 * wa), cb.y0, cb.y1);
+      if (core && core.y1 - core.y0 + 1 >= 1.5 * sp && core.y1 - core.y0 + 1 <= 3.6 * sp) {
+        const u = { x0: xa, x1: xb, y0: core.y0, y1: core.y1, w: xb - xa + 1, h: core.y1 - core.y0 + 1 };
+        const q = glyphHook.probs(u);
+        if (q[type] >= 0.7 && q[type] >= q.none) count({ n: 1, acc: type, pn: q[type] * 0.9 });
+      }
+    }
   }
   const nAcc = Math.min(7, sharps + flats);
   st.keyConf = nAcc ? confSum / (sharps + flats) : 0;
@@ -1464,11 +1590,13 @@ export function assemble(ctx, staves, cls, image, options = {}) {
   const perSystem = systemList.map(s => s.staves.length);
   const staffCount = perSystem.length ? Math.max(...perSystem) : 1;
   const clefVote = (si) => {
-    const votes = {};
-    // (confidence-weighted: a size-rule guess counts less than a classified clef)
+    // (confidence-weighted: a size-rule guess counts less than a classified clef; the usual clef of the
+    // staff — the lower staff of a grand staff is bass — is a prior that weak size-rule guesses alone
+    // (0.35 each) only outvote on several systems)
+    const def = staffCount === 2 && si === 1 ? 'bass' : 'treble';
+    const votes = { [def]: staffCount === 2 ? 0.75 : 0.1 };
     for (const sys of systemList) { const st = sys.staves[si]; if (st && !st.clefMissing) votes[st.clef] = (votes[st.clef] || 0) + (st.clefConf ?? 0.6); }
-    const best = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
-    return best ? best[0] : (si === 1 ? 'bass' : 'treble');
+    return Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
   };
   const clefs = []; for (let i = 0; i < staffCount; i++) clefs.push(clefVote(i));
   let instruments;
@@ -1599,6 +1727,9 @@ export function assemble(ctx, staves, cls, image, options = {}) {
       if (!options.legacyPreprocess) Object.defineProperty(voice, '_keepNotes', { value: true, enumerable: false, configurable: true });
       const first = mi === 0 && rm === rawMeasures[0];
       const fit = options.noFit ? { conf: 1 } : (!options.legacyPreprocess && options.decode !== false && decodeVoice(voice, capacity, first)) || fitVoice(voice, capacity, first);   // noFit: diagnostics only
+      // a measure holding only a rest that fills it is a full-measure rest: a whole rest in any meter
+      // (the app's convention, like the Finale / MusicXML importers; the decoder made it e.g. a dotted half in 3/4)
+      if (voice.length === 1 && voice[0].kind === 'rest' && !fit.pickup && !voice[0].tuplet && Math.abs(durTicks(voice[0]) - capacity) < 1) { voice[0].dur = { base: 'whole', dots: 0 }; voice[0].fullMeasureRest = true; }
       conf = Math.min(conf, fit.conf);
       if (fit.pickup) m.pickup = true;
       if (fit.conf < 0.6) warnings.push(`${mi + 1}번째 마디의 박자가 맞지 않습니다.`);
@@ -1889,7 +2020,10 @@ export async function recognize(image, options = {}, onProgress = () => {}) {
   const guessed = first.warnings.some(w => w.startsWith('박자표를 인식하지 못해'));
   const oddMeter = guessed && ts0 && !PLAUSIBLE_METERS.has(`${ts0.num}/${ts0.den}`);
   const tiny = first.staves.length === 1 && first.score.measures.length <= 3;
-  if (first.staves.length && first.confidence >= AUTO_KEEP_CONFIDENCE && !oddMeter && !tiny) { onProgress({ stage: 'assemble', percent: 100, message: '완료' }); return { ...first, pipeline: 'legacy' }; }
+  // (staves without a readable clef: the original front end's header reading failed — on photos
+  // the photo pipeline reads clefs and key signatures far better, so compare both)
+  const clefLost = first.warnings.some(w => w.startsWith('일부 오선의 음자리표를 인식하지 못해'));
+  if (first.staves.length && first.confidence >= AUTO_KEEP_CONFIDENCE && !oddMeter && !tiny && !clefLost) { onProgress({ stage: 'assemble', percent: 100, message: '완료' }); return { ...first, pipeline: 'legacy' }; }
   const second = await recognizeOnce(image, { ...options, legacyPreprocess: false }, scaled(40, 100));
   // measure-fit confidence alone favours a result that lost most notes (short
   // measures padded with rests still "fit"): weigh it by the share of notes found
