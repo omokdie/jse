@@ -38,6 +38,7 @@ import photo_sim as PS      # noqa: E402
 
 SPLIT_SEEDS = {'eval': 9001, 'dev': 5001, 'train': 100001,
                'holdout': 7001,     # fresh holdout (real music, gen_finale_pages.mjs --split holdout)
+               'holdout3': 8101,    # round-3 frozen holdout (gen_finale_pages.mjs --keys tools/omr/holdout3.json)
                'ftrain': 300001}    # real-music training photos
 A4_W, A4_H = 2480, 3508
 

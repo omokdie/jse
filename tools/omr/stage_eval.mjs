@@ -142,7 +142,7 @@ function fmtSummary(s) {
   return {
     n: s.n,
     'staff R': pct(s.staffOk, s.staffGt), 'staff +': s.staffExtra, 'line err sp': (s.lineErr / Math.max(1, s.n)).toFixed(3), 'line >¼sp': pct(s.lineBig, s.lineErrN), 'cov': pct(s.staffCov, s.staffOk),
-    'sys ok': pct(s.sysOk, s.sysGt), 'clef': pct(s.clefOk, s.headerN), 'key': pct(s.keyOk, s.headerN), 'time': pct(s.timeOk, s.timeN),
+    'sys ok': pct(s.sysOk, s.sysGt), 'clef': pct(s.clefOk, s.headerN), 'key': pct(s.keyOk, s.headerN), 'page key': pct(s.pageKeyOk || 0, s.n), 'time': pct(s.timeOk, s.timeN),
     'bar R': pct(s.barTp, s.barGt), 'bar P': pct(s.barTp, s.barDet),
     'head R': pct(s.headTp, s.headGt), 'head P': pct(s.headTp, s.headDet), 'cand R': pct(s.headCandTp, s.headGt), 'blk R': pct(s.headBlackTp, s.headBlackGt), 'half R': pct(s.headHalfTp, s.headHalfGt), 'whole R': pct(s.headWholeTp, s.headWholeGt), 'fill ok': pct(s.headFillOk, s.headTp),
     'rest R': pct(s.restTp, s.restGt), 'rest P': pct(s.restTp, s.restDet), 'rest type': pct(s.restTypeOk, s.restTp),
@@ -168,7 +168,7 @@ async function main() {
     const time = Date.now() - t0;
     const sm = res.trace ? stageMetrics(gt, res.trace) : { m: {} };
     const seq = sequenceMetrics(gt, res);
-    const row = { ...sm.m, ...seq, time, photoPipe: res.pipeline === 'photo' ? 1 : 0 };
+    const row = { ...sm.m, ...seq, time, photoPipe: res.pipeline === 'photo' ? 1 : 0, pageKeyOk: res.score.measures[0].keySig.fifths === gt.keyFifths ? 1 : 0 };
     const kind = (gt.photo && gt.photo.kind) || c.group;
     (groups[c.group] ||= []).push(row);
     if (gt.photo) (groups[`${c.group}:${kind}`] ||= []).push(row);

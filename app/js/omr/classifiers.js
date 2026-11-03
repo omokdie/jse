@@ -25,7 +25,9 @@ export async function loadModel(name) {
   if (cache.has(name)) return cache.get(name);
   let model = null;
   try {
-    const mod = await import(`./models/${name}.js`);
+    // Node-only evaluation hook: OMR_MODELS=<dir> loads <dir>/<name>.js instead (A/B runs of model versions)
+    const dir = (typeof process !== 'undefined' && process.env && process.env.OMR_MODELS) || './models';
+    const mod = await import(`${dir}/${name}.js`);
     model = prepare(mod.MODEL);
   } catch (e) { model = null; }
   cache.set(name, model);

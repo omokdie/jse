@@ -18,7 +18,7 @@ export function buildTrace(ctx, staves, prims, cls) {
       pts.push(P(st.x1, st.lines[k][st.x1]));
       lines.push(pts);
     }
-    return { lines, systemIndex: st.systemIndex, clef: st.clef, clefMissing: !!st.clefMissing, keyFifths: st.keyFifths,
+    return { lines, systemIndex: st.systemIndex, clef: st.clef, clefMissing: !!st.clefMissing, keyFifths: st.keyFifths, keyConf: st.keyConf || 0,
       timeSig: st.timeSig || null, headerEnd: P(st.headerEnd ?? st.x0, st.lines[2][xi(st.headerEnd ?? st.x0)]) };
   });
   const barlines = [];
@@ -33,7 +33,7 @@ export function buildTrace(ctx, staves, prims, cls) {
     if (ev.kind !== 'note') continue;
     for (const hd of ev.heads) { seen.add(hd); heads.push({ c: P(hd.cx, hd.cy), hollow: !!hd.hollow, used: true, pos: hd.pos, acc: hd.accidental || null, base: ev.base }); }
   }
-  for (const hd of prims.heads || []) if (!seen.has(hd)) heads.push({ c: P(hd.cx, hd.cy), hollow: !!hd.hollow, used: false });
+  for (const hd of prims.heads || []) if (!seen.has(hd)) heads.push({ c: P(hd.cx, hd.cy), hollow: !!hd.hollow, used: false, drop: hd._drop || 'later', cls: hd.cls });
   const events = (cls.events || []).map(ev => {
     const b = ev.bbox;
     return { kind: ev.kind, base: ev.base, dots: ev.dots, staff: ev.staff ? ev.staff.index : -1, c: P((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2), nb: ev.nb ?? null,

@@ -126,9 +126,10 @@ export function learnedHeads(ctx, staves, nolines, model, predictFn, opts = {}) 
     const f = candFeatures(c);
     for (let k = 0; k < f.length; k++) x[PATCH * PATCH + k] = f[k];
     predictFn(model, x, probs);
-    let cls = 0;
-    for (let k = 1; k < 4; k++) if (probs[k] > probs[cls]) cls = k;
-    if (cls === 0 || 1 - probs[0] < minProb) continue;
+    // a head unless "none" dominates: the class is the most likely of filled / half / whole
+    let cls = 1;
+    for (let k = 2; k < 4; k++) if (probs[k] > probs[cls]) cls = k;
+    if (1 - probs[0] < minProb) continue;
     dets.push({ cx: c.x, cy: c.y, p: c.p, staff: c.staff, cls, prob: 1 - probs[0], probs: Array.from(probs) });
   }
   // non-maximum suppression: same or adjacent staff position and overlapping in x

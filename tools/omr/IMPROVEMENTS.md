@@ -1,5 +1,138 @@
 # OMR photo-accuracy work
 
+## Round 3 (after v1.0.4): learned rhythm + barline verifier, measure decoder, a stem-loss bug
+
+### Results (`node tools/omr/stage_eval.mjs --dir tools/omr/corpus/<split>`; pitch / duration / exact measure count)
+
+| split | before (v1.0.4) | after | per stage (before → after) |
+|---|---|---|---|
+| **holdout3_photo** (82 photos, frozen, unseen music + 2 unseen fonts) | 59.1 / 65.1 / 61.0 % | **63.5 / 75.6 / 68.3 %** | page key 80.5→81.7, clef 82.4→82.4, barline R/P 82.0/84.5→85.4/99.7, heads R 85.2→89.1, rests R 87.5→91.3, accidentals R 39.1→45.3 |
+| — scan (17) / flat (29) | 75.6/82.9/88.2 · 69.4/70.5/69.0 | 80.8/90.2/88.2 · 75.4/83.9/72.4 | |
+| — curl (20) / hard (16) | 57.2/71.0/65.0 · 21.2/24.0/12.5 | 60.3/82.3/75.0 · 24.0/33.1/31.2 | |
+| holdout3_pages (41 clean pages of the same music) | 81.4 / 89.3 / 82.9 | **84.1 / 92.3 / 85.4** | page key 92.7→95.1, barline P 92.5→96.9 |
+| fresh_photo (56, dev this round) | 70.5 / 66.0 / 35.7 | **81.1 / 85.1 / 66.1** | scan 94.3/95.3, flat 85.6/87.8, curl 79.5/85.4, hard 59.0/67.6 (pitch/duration) |
+| eval_photo (60, synthetic) | 66.9 / 65.7 / 36.7 | **83.2 / 85.9 / 53.3** | scan 97.2/97.2, flat 90.9/92.5, curl 85.0/87.5, hard 57.9/64.6 |
+| eval_clean (60 clean) | 96.0 / 97.2 / 83.3 | **96.5 / 97.8 / 83.3** | no regression |
+| base (40 clean) | 94.2 / 95.3 / 92.5 | **97.1 / 97.1 / 92.5** | no regression |
+| aug (80) | 73.1 / 72.9 / 35.0 | **84.6 / 91.7 / 75.0** | |
+
+holdout3 photos by font (pitch / duration, before → after): Sebastian (unseen) 60.8/67.7 → 75.9/85.8,
+Ekmelos (unseen) 62.5/68.2 → 62.0/78.3, Leipzig 71.3/71.1 → 78.7/81.6, FreeSerif 66.4/62.2 → 74.3/69.7,
+Leland 67.5/73.3 → 69.2/77.1, Petaluma 44.0/57.8 → 47.8/71.6, Bravura 47.6/57.0 → 46.7/64.6.
+"Before" of the old splits = the round-2 final runs (same code as v1.0.3/v1.0.4, whose OMR files are
+unchanged since v1.0.3); holdout3 "before" was run with the v1.0.4 tree (`git archive HEAD`).
+
+Targets (≥ 90 % pitch and duration, ≥ 60 % exact measure counts on photos of unseen music) are
+**not reached**: see "What blocks 90 %".  Timing: Node, this machine, lyrics off: 2.9 s per holdout3 photo (2.9 s before), 2.4–2.8 s on the other photo splits; Chromium, app worker incl. the lyric stage: 3.4–4.4 s per photo, 4.9 s in the UI scan flow.  Shipped weights (int8, lazy-loaded):
+`models/glyphs.js` 87 KB, `models/rhythm.js` 87 KB (new), `models/heads.js` 60 KB (retrained),
+`models/bars.js` 59 KB (new) — 294 KB in total.
+
+### holdout3 (frozen before any round-3 tuning; evaluated once before and once after)
+
+`tools/omr/holdout3.json` lists 136 Finale-corpus repertoire files never used by any generated set up to
+v1.0.4 whose (normalised) title matches no used title, plus 24 `related` files (other arrangements /
+worksheets of the same tunes, pieces already used).  `gen_finale_pages.mjs --keys tools/omr/holdout3.json`
+→ `corpus/holdout3_pages` (41 clean A4 pages from 40 pieces: Bach inventions, Beethoven, Chopin,
+Schumann, Satie, Joplin, Handy, Morton, folk songs, rounds, carols; 20 piano grand staves; 4,000+ notes;
+7 fonts, 6 pages each — **Sebastian and Ekmelos never used for training**, Leipzig only for dev), and
+`gen_photo.py --split holdout3 --per-page 2` → `corpus/holdout3_photo` (82 photos: 17 scan, 29 flat,
+20 curl, 16 hard).  One generated page ("When the Saints Go Marching In", a tune used in training under
+another title) was removed before evaluation.  Training data of this round excludes `files` + `related`
+(`gen_finale_pages.mjs --exclude tools/omr/holdout3.json`).  fresh_photo / fresh_pages and a 20-photo
+Finale dev set were used for all tuning.
+
+### Changes
+
+1. **Bug fix — stems lost to barlines of other systems** (`barlines.js`, since round 1): after barline
+   detection every vertical object of the *page* at a barline's x (±2 px) was marked as a barline; stems
+   of other systems at the same x lost their notes (~11 % of all note heads on photos: detected, but
+   "no stem").  Now only objects inside the barline's own system are marked.  Largest single gain of
+   the round (fresh_photo, measured together with the clef / key fixes 6–7: pitch +7.7, duration +7.1,
+   exact measures +10.7 points).
+2. **Barline verifier** (`models/bars.js`, 560+10 → 64 → 32 → 2): grey patch of each candidate on each
+   staff + the rule measurements; candidates down to 75 % staff coverage reach it; a detected note head
+   0.3–0.85 sp beside the stroke, a head at an end or long extensions veto (down-stems right after a
+   barline were read as a second stroke → false double / final barlines).  Trained on 33 k candidates
+   (labels from GT barline segments).  Dev: barline precision 88 → 100 %, recall 86 → 89 %.
+3. **Learned beam / flag count** (`rhythm.js`, `models/rhythm.js`, 568 → 96 → 48 → 4: none / 8th / 16th /
+   32nd+): 20×28 grey patch at the stem's free end (tip on top, down-stems flipped) + stem geometry +
+   the rule counts; 35 k stems from detected events matched to exact GT durations; validation 97 %
+   (rules 81 %).
+4. **Measure decoder** (`decodeVoice`, photo pipeline): per measure, a dynamic program over the running
+   tick total picks the cheapest durations that fill the time signature exactly — costs from the beam /
+   flag classifier (temperature 0.6), head fill, dots, rest types — including **triplet groups** (three
+   equal values in the time of two, cost 1.2); short measures are padded with rests (cheap pickup in the
+   first measure).  Replaces fitVoice's greedy repairs there (fitVoice remains the fallback); overfull
+   measures keep their notes and shorten durations before dropping anything.
+5. **Accidentals touching their head**: the ink box of the window left of every head without an
+   accidental is classified (≥ 0.92, sharp / flat / natural; not for displaced chord heads).
+6. **Key signature**: confidence-weighted page vote over all staves ("nothing found" is a weak vote),
+   explicit accidentals break near ties; an accidental blurred into the clef is cut off at the clef's
+   thinnest column and classified; broken accidental pieces merge across slightly larger gaps.
+7. **Clefs**: a staff whose clef was not found now takes the clef of the same staff in the other
+   systems (was: always treble); in the photo pipeline an uncertain (< 0.8) minority clef follows the
+   majority.  Warning text adjusted accordingly.
+8. **Time signature**: a read time signature that almost no measure fits is replaced by the length most
+   measures share (photo pipeline).
+9. Learned heads: a candidate is a head unless "none" dominates (was: arg-max class ≠ none).
+10. Retrained `heads.js` (736 k samples, + round-3 photos) — same size; `glyphs.js` kept (a retrain did
+    not help on dev).
+
+Tried and dropped (no gain on dev): lower head threshold (0.35 = 0.5: the head model is almost binary),
+cheaper "add a dot" in the decoder, a key-signature position check (accidentals vs. the expected staff
+positions), lower barline candidate threshold, note-content key evidence beyond tie-breaks (wrong-key
+pages have no explicit accidentals to use).
+
+### Data (round 3, all under /tmp; train split only, holdout3 excluded)
+
+309 new Finale pages (5 fonts) → 309 photos with a hard-heavy profile mix (`--kinds hard,flat,curl,hard,
+scan,flat,hard,curl`) + the round-2 photos; `extract_glyphs.mjs` now writes glyph, head, rhythm
+(`--rhythm-out`) and barline (`--bars-out`) samples in one front-end run.  `train_rhythm.py` trains both
+the rhythm counter and (`--kind bars`) the barline verifier.  `OMR_MODELS=<dir>` (Node only) loads models
+from another directory for A/B runs; diagnostic options: `learnedRhythm`, `learnedBars`, `decode`,
+`decodeT`, `dotAddCost`, `headMinProb`, `barCandMin`, `noFit`.
+
+### What blocks 90 %
+
+Measured on holdout3 photos (pitch 63.5 %, duration 75.6 %) — in order of the notes they cost:
+
+1. **Clef misreads** (clef 82 % on holdout3 photos, 93 % even on its clean pages; dev 94 %): the clef
+   detector takes the *first* tall component of the staff header.  On pages with a rehearsal-mark box
+   (or other text) at the staff start that component is not the clef: the glyph classifier says "none"
+   (0.98) but the old size rule still calls it bass, and the real treble clef right after it is never
+   looked at → every note of the staff is wrong (e.g. "Row, Row, Row Your Boat" clean page: 0 % pitch,
+   96 % duration).  Fix next: pick the clef among the tall header components with the classifier
+   (skip rejected ones), and check clef consistency across systems.  Found on holdout3 after the final
+   run, so it was not fixed this round.
+2. **Hard / low-resolution photos** (16 of 82; 24 % pitch): heads recall 63 %, page key 50 %, barline
+   recall 70 %.  Needs a dedicated low-resolution path (training / super-resolution at 6–10 px staff
+   space) — the models see these photos only after rectification to 12 px.
+3. **Key signatures** (page key 82 %): mostly "no accidental found" on curled / hard photos, a few
+   over-counts; a wrong key corrupts every note of its steps.
+4. **Accidentals inside measures** (recall 45 %) and **chord heads** (missing / extra heads in dense
+   chords ≈ 5 % of notes).
+5. **Rhythm**: dotted values vs. undotted and 16th / 32nd confusions; the decoder cannot overrule a
+   confident classifier error when the measure still adds up.
+6. **Barlines** (recall 85 %): one missed barline per page breaks the exact measure count (68 %).
+
+The two unseen fonts are not the main problem (Sebastian is among the best fonts); Bravura and Petaluma
+pages are the weakest, mostly through clefs and keys.
+
+### Commands (round 3)
+
+```sh
+python3 tools/omr/smufl_glyphs.py --font /tmp/fonts3/sebastian/fonts/Sebastian.otf --out /tmp/omr_fonts/sebastian.json   # + ekmelos (generator only)
+node tools/omr/gen_finale_pages.mjs --keys tools/omr/holdout3.json --count 42 --per-folder 12 --fonts sebastian,ekmelos,bravura,leland,petaluma,freeserif,leipzig --out tools/omr/corpus/holdout3_pages --seed 31
+python3 tools/omr/gen_photo.py --pages tools/omr/corpus/holdout3_pages --split holdout3 --count 42 --per-page 2 --out /tmp/h3   # → corpus/holdout3_photo
+node tools/omr/gen_finale_pages.mjs --split train --exclude tools/omr/holdout3.json --count 320 --per-folder 6 --fonts freeserif,bravura,petaluma,leland,leipzig --out /tmp/r3_pages --seed 41
+python3 tools/omr/gen_photo.py --pages /tmp/r3_pages --split ftrain --start 1000 --count 309 --fast --kinds hard,flat,curl,hard,scan,flat,hard,curl --out /tmp/r3p
+node tools/omr/extract_glyphs.mjs --dir /tmp/r3p/ftrain_photo --shard 0/2 --out /tmp/g0 --heads-out /tmp/h0 --rhythm-out /tmp/r0 --bars-out /tmp/b0   # + shard 1/2
+python3 tools/omr/train_rhythm.py --data /tmp/r_old,/tmp/r0,/tmp/r1 --epochs 30                       # → models/rhythm.js
+python3 tools/omr/train_rhythm.py --kind bars --data /tmp/b0,/tmp/b1 --epochs 30 --hidden 64,32       # → models/bars.js
+python3 tools/omr/train_heads.py --data /tmp/heads_v1,/tmp/h_fclean,/tmp/h_old,/tmp/h0,/tmp/h1 --epochs 16
+```
+
+
 ## Round 2 (after v1.0.2): real music, several music fonts, learned glyph classifier
 
 ### Results (`node tools/omr/stage_eval.mjs --dir tools/omr/corpus/<split>`; pitch / duration / exact measure count)

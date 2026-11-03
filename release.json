@@ -1,5 +1,5 @@
 {
   "_comment": "Release metadata merged into the published version.json (see RELEASING.md). androidMinNative: raise it to the current version whenever the Android NATIVE code (mobile/android) changed in a way the OTA web bundle cannot carry — devices below it are offered the APK instead. notes: shown in the in-app update prompt.",
   "androidMinNative": "1.0.0",
-  "notes": "새 기능: 음원(MP3·M4A·WAV 등)으로 악보 만들기 — 멜로디/피아노/자동, 빠르기·박자·조성 자동 인식, 코드 기호, 원음과 비교하며 바로 다시 정리. 앱 안에서 실행되어 인터넷이 필요 없습니다."
+  "notes": "사진 인식 3차 학습: 처음 보는 곡의 사진에서 박자 65%→76%, 음높이 59%→64%, 마디 수 61%→68%. 다른 줄의 음표를 지우던 마디선 인식 버그 수정, 빔·꼬리 수와 마디선을 학습한 모델 추가, 음표에 붙은 임시표 인식."
 }

@@ -41,10 +41,16 @@ const FONTS = opt('--fonts', 'freeserif,bravura,petaluma,leland').split(',');
 const FONT_DIR = opt('--font-dir', '/tmp/omr_fonts');
 const DPI = parseFloat(opt('--dpi', '300'));
 const PIANO_P = parseFloat(opt('--piano', '0.35'));
+const PER_FOLDER = parseInt(opt('--per-folder', '3'), 10);   // pages per folder (parts of one piece / anthology)
 // --glyph-mode: for classifier training only — random key / time signature and clef changes every few
 // measures (many more header glyphs in every font); the music then no longer fits the meter, so these
 // pages must not be used for end-to-end evaluation (gt.glyphMode = true).
 const GLYPH_MODE = args.includes('--glyph-mode');
+// --keys FILE: only collections / files listed in FILE ({keys: [splitKey...], files: [name...]}, e.g. tools/omr/holdout3.json);
+// --exclude FILE: never collections listed in FILE (training must exclude the frozen holdouts)
+const keyList = (f, withRelated) => { if (!f) return null; const j = JSON.parse(fs.readFileSync(f, 'utf8')); return new Set([...(j.keys || []), ...(j.files || []), ...(withRelated ? j.related || [] : [])]); };
+const ONLY_KEYS = keyList(opt('--keys', null), false), EXCLUDE_KEYS = keyList(opt('--exclude', null), true);
+const listed = (set, f) => set.has(splitKey(f)) || set.has(f.replace(/\.musx\.xml\.gz$|\.xml\.gz$/, ''));
 fs.mkdirSync(OUT, { recursive: true });
 
 // ---------------------------------------------------------------- utilities
@@ -81,32 +87,39 @@ function excerpt(score, rng) {
   const cands = [];
   score.parts.forEach((p, pi) => {
     if (p.staves.length > 2) return;
-    if (!p.staves.every(s => (s.type || 'standard') === 'standard' && (s.lines || 5) === 5 && OK_CLEFS.has(s.clef))) return;
+    if (!p.staves.every(s => (s.type || 'standard') === 'standard' && (s.lines || 5) === 5)) return;
     const s0 = staffStart[pi], n = p.staves.length;
-    // cut at the first key / time / clef change
-    let end = Math.min(score.measures.length, 120);
-    for (let mi = 1; mi < end; mi++) {
+    // segments between key / time / clef changes; the excerpt is the segment with most notes
+    const cuts = [0];
+    for (let mi = 1; mi < score.measures.length; mi++) {
       const m = score.measures[mi];
-      if (m.timeSig || m.keySig) { end = mi; break; }
-      if (m.staves.slice(s0, s0 + n).some(sm => sm.clef)) { end = mi; break; }
+      if (m.timeSig || m.keySig || m.staves.slice(s0, s0 + n).some(sm => sm.clef)) cuts.push(mi);
     }
-    if (end < 4) return;
-    const ts = effectiveTimeSig(score, 0);
-    if (!ts || ts.num > 12 || ![2, 4, 8].includes(ts.den)) return;
-    let notes = 0, extraVoices = 0, far = 0;
-    for (let mi = 0; mi < end; mi++) for (let si = s0; si < s0 + n; si++) {
-      const sm = score.measures[mi].staves[si];
-      if (!sm) continue;
-      const clef = effectiveClef(score, mi, si);
-      for (const ev of sm.voices[0] || []) if (ev.kind === 'note' && !ev.grace) {
-        notes++;
-        // more than 4 ledger lines: usually a part imported in the wrong clef / transposition
-        if (ev.notes.some(nt => { const q = staffPosition(nt, clef); return q < -8 || q > 16; })) far++;
+    cuts.push(score.measures.length);
+    let best = null;
+    for (let c = 0; c + 1 < cuts.length; c++) {
+      const start = cuts[c], end = Math.min(cuts[c + 1], start + 120);
+      if (end - start < 4) continue;
+      const ts = effectiveTimeSig(score, start);
+      if (!ts || ts.num > 12 || ![2, 4, 8].includes(ts.den)) continue;
+      if (![...Array(n).keys()].every(i => OK_CLEFS.has(effectiveClef(score, start, s0 + i)))) continue;
+      let notes = 0, extraVoices = 0, far = 0;
+      for (let mi = start; mi < end; mi++) for (let si = s0; si < s0 + n; si++) {
+        const sm = score.measures[mi].staves[si];
+        if (!sm) continue;
+        const clef = effectiveClef(score, mi, si);
+        for (const ev of sm.voices[0] || []) if (ev.kind === 'note' && !ev.grace) {
+          notes++;
+          // more than 4 ledger lines: usually a part imported in the wrong clef / transposition
+          if (ev.notes.some(nt => { const q = staffPosition(nt, clef); return q < -8 || q > 16; })) far++;
+        }
+        if (sm.voices.slice(1).some(v => v && v.length)) extraVoices++;
       }
-      if (sm.voices.slice(1).some(v => v && v.length)) extraVoices++;
+      const len = end - start;
+      if (notes < 24 || notes / (len * n) < 1.2 || extraVoices > 0.4 * len * n || far > 0.1 * notes) continue;
+      if (!best || notes > best.notes) best = { pi, s0, n, start, end, notes };
     }
-    if (notes < 24 || notes / (end * n) < 1.2 || extraVoices > 0.4 * end * n || far > 0.1 * notes) return;
-    cands.push({ pi, s0, n, end, notes });
+    if (best) cands.push(best);
   });
   if (!cands.length) return null;
   const piano = cands.filter(c => c.n === 2), single = cands.filter(c => c.n === 1);
@@ -118,10 +131,13 @@ function excerpt(score, rng) {
 function buildScore(score, c) {
   const part = JSON.parse(JSON.stringify(score.parts[c.pi]));
   part.transposeChromatic = 0;
-  const measures = score.measures.slice(0, c.end).map((m, mi) => {
+  const start = c.start || 0;
+  part.staves.forEach((st, i) => { st.clef = effectiveClef(score, start, c.s0 + i); });
+  const measures = score.measures.slice(start, c.end).map((m, k) => {
+    const mi = start + k;
     const mm = JSON.parse(JSON.stringify({ ...m, staves: m.staves.slice(c.s0, c.s0 + c.n) }));
     delete mm.breaks;
-    if (mi === 0) { mm.timeSig = effectiveTimeSig(score, 0); mm.keySig = effectiveKeySig(score, 0); }
+    if (k === 0) { mm.timeSig = effectiveTimeSig(score, start); mm.keySig = effectiveKeySig(score, start); mm.staves.forEach(sm => { delete sm.clef; }); if (start > 0) { delete mm.pickup; delete mm.barlineLeft; } }
     if (mi === c.end - 1 && mm.barlineRight && mm.barlineRight !== 'single' && mm.barlineRight !== 'final' && mm.barlineRight !== 'double') delete mm.barlineRight;
     if (mm.barlineRight === 'dashed' || mm.barlineRight === 'none') delete mm.barlineRight;
     for (const sm of mm.staves) {
@@ -294,7 +310,7 @@ function buildGT(score, page, S, n, name, font, tx, pi = 0) {
 }
 
 // ---------------------------------------------------------------- main
-const files = fs.readdirSync(SRC).filter(f => f.endsWith('.gz') && splitOf(f) === SPLIT).sort();
+const files = fs.readdirSync(SRC).filter(f => f.endsWith('.gz') && (ONLY_KEYS ? listed(ONLY_KEYS, f) : splitOf(f) === SPLIT) && !(EXCLUDE_KEYS && listed(EXCLUDE_KEYS, f))).sort();
 // deterministic shuffle
 for (let i = files.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [files[i], files[j]] = [files[j], files[i]]; }
 console.log(`${files.length} ${SPLIT} files`);
@@ -304,7 +320,7 @@ const index = [];
 for (const f of files) {
   if (made >= COUNT) break;
   const key = pieceKey(f);
-  if ((usedPieces.get(key) || 0) >= 3) continue;     // at most 3 parts of one piece
+  if ((usedPieces.get(key) || 0) >= PER_FOLDER) continue;     // at most PER_FOLDER parts of one piece / folder
   tried++;
   let score;
   try { score = enigmaToScore(zlib.gunzipSync(fs.readFileSync(path.join(SRC, f))).toString('utf8')); } catch (e) { continue; }

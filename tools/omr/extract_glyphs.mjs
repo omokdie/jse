@@ -9,7 +9,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { frontEnd } from '../../app/js/omr/frontend.js';
-import { removeStaffLines, segmentSymbols } from '../../app/js/omr/omr.js';
+import { removeStaffLines, segmentSymbols, classify } from '../../app/js/omr/omr.js';
+import { stemFeatures, RW, RH, N_RFEAT } from '../../app/js/omr/rhythm.js';
+import { BW, BH, N_BFEAT } from '../../app/js/omr/barlines.js';
+import { loadModel } from '../../app/js/omr/classifiers.js';
 import { glyphFeatures, GLYPH_CLASSES, GW, GH, N_GFEAT } from '../../app/js/omr/glyphs.js';
 import { headCandidates, patchAt, candFeatures, inkLevels, PATCH } from '../../app/js/omr/heads.js';
 import { loadImage, listCases } from './metrics.mjs';
@@ -27,6 +30,19 @@ const GTBOX_SKIP = new Set(['none', 'dot']);
 const headsOut = opt('--heads-out', null);
 const HREC = 1 + 16 + PATCH * PATCH, HTYPES = { noteheadBlack: 1, noteheadHalf: 2, noteheadWhole: 3 };
 const hfd = headsOut ? fs.openSync(headsOut + '.bin', 'w') : null;
+// --rhythm-out <base>: beam / flag count samples of detected stems (runtime-like: learned heads), labelled
+// by the GT duration of the matched event: 0 none, 1 eighth, 2 16th, 3 32nd+; records [label u8][geom 8×f32][patch RW×RH u8]
+const rhythmOut = opt('--rhythm-out', null);
+const rfd = rhythmOut ? fs.openSync(rhythmOut + '.bin', 'w') : null;
+const RNP = RW * RH, RNG = N_RFEAT - RNP, RREC = 1 + 4 * RNG + RNP;
+const rstats = { images: 0, samples: 0, perClass: [0, 0, 0, 0], unmatched: 0, perImage: [] };
+// --bars-out <base>: barline-candidate samples (one per candidate and staff), label 1 = a GT barline within 1.1 sp
+const barsOut = opt('--bars-out', null);
+const bfd = barsOut ? fs.openSync(barsOut + '.bin', 'w') : null;
+const BNP = BW * BH, BNG = N_BFEAT - BNP, BREC = 1 + 4 * BNG + BNP;
+const bstats = { images: 0, samples: 0, perClass: [0, 0], gtBars: 0, gtFound: 0, perImage: [] };
+const models = (rfd || bfd) ? { heads: await loadModel('heads'), glyphs: await loadModel('glyphs'), rhythm: null, bars: null } : null;
+const BEAMS = { whole: 0, half: 0, quarter: 0, eighth: 1, '16th': 2, '32nd': 3, '64th': 3, '128th': 3, breve: 0 };
 const hstats = { images: 0, samples: 0, pos: [0, 0, 0, 0], gt: [0, 0, 0, 0], gtFound: [0, 0, 0, 0], perImage: [] };
 const NP = GW * GH, NG = N_GFEAT - NP;
 const REC = 1 + 4 * NG + NP;
@@ -52,9 +68,11 @@ for (const c of cases) {
   try { fe = frontEnd(img, {}); } catch (e) { console.error('front end failed', c.image, e.message); continue; }
   const { ctx, staves } = fe;
   if (!staves.length) continue;
+  if (models) ctx.models = models;
   const nolines = removeStaffLines(ctx, staves);
   if (hfd) headSamples(ctx, staves, nolines, gt, c);
   const prims = segmentSymbols(ctx, staves, nolines);
+  if (rfd || bfd) { ctx.cc = prims.cc; if (bfd) ctx.barCollect = []; rhythmSamples(ctx, staves, nolines, prims, gt, c); if (bfd) barSamples(ctx, gt, c); }
   const { sp } = ctx;
   const spO = gt.staffSpace;
   const gs = (gt.symbols || []).filter(s => CLS.has(s.name)).map(s => ({ ...s, cls: CLS.get(s.name), cc: [s.bbox[0] + s.bbox[2] / 2, s.bbox[1] + s.bbox[3] / 2] }));
@@ -151,6 +169,73 @@ for (const c of cases) {
 fs.closeSync(fd);
 fs.writeFileSync(outBase + '.json', JSON.stringify(stats, null, 1));
 if (hfd) { fs.closeSync(hfd); fs.writeFileSync(headsOut + '.json', JSON.stringify(hstats, null, 1)); console.log('head samples', hstats.samples, 'labels', hstats.pos.join('/')); }
+if (rfd) { fs.closeSync(rfd); fs.writeFileSync(rhythmOut + '.json', JSON.stringify(rstats, null, 1)); console.log('rhythm samples', rstats.samples, 'per class', rstats.perClass.join('/'), 'unmatched', rstats.unmatched); }
+if (bfd) { fs.closeSync(bfd); fs.writeFileSync(barsOut + '.json', JSON.stringify(bstats, null, 1)); console.log('bar samples', bstats.samples, 'per class', bstats.perClass.join('/'), 'GT barlines with a candidate', bstats.gtFound, '/', bstats.gtBars); }
+
+/** Detected stems (classify(), as at run time) matched to GT note events by their heads. */
+function barSamples(ctx, gt, c) {
+  const spO = gt.staffSpace;
+  const segs = (gt.barlines || []).map(b => (b.p0 ? [b.p0, b.p1] : [[b.x, b.y0], [b.x, b.y1]]));
+  const found = new Set();
+  const buf = Buffer.alloc(BREC * ctx.barCollect.reduce((a, q) => a + q.feats.length, 0));
+  let n = 0;
+  for (const cand of ctx.barCollect) cand.sys.staves.forEach((st, k) => {
+    const xi = Math.max(0, Math.min(ctx.w - 1, Math.round(cand.x)));
+    const ym = (st.lines[0][xi] + st.lines[4][xi]) / 2;
+    const [X, Y] = ctx.toOrig(cand.x, ym);
+    let label = 0;
+    segs.forEach(([p0, p1], i) => {
+      if (Y < Math.min(p0[1], p1[1]) - spO || Y > Math.max(p0[1], p1[1]) + spO) return;
+      const t = Math.abs(p1[1] - p0[1]) > 1e-6 ? (Y - p0[1]) / (p1[1] - p0[1]) : 0;
+      const xs = p0[0] + t * (p1[0] - p0[0]);
+      if (Math.abs(xs - X) < 1.1 * spO) { label = 1; found.add(i); }
+    });
+    const f = cand.feats[k], o = n * BREC;
+    buf[o] = label;
+    for (let q = 0; q < BNG; q++) buf.writeFloatLE(f[BNP + q], o + 1 + 4 * q);
+    for (let q = 0; q < BNP; q++) buf[o + 1 + 4 * BNG + q] = Math.max(0, Math.min(255, Math.round(f[q] * 180 + 20)));
+    bstats.perClass[label]++;
+    n++;
+  });
+  fs.writeSync(bfd, buf, 0, n * BREC);
+  bstats.images++; bstats.samples += n; bstats.gtBars += segs.length; bstats.gtFound += found.size;
+  bstats.perImage.push({ name: path.basename(c.image), kept: n });
+  ctx.barCollect = null;
+}
+
+function rhythmSamples(ctx, staves, nolines, prims, gt, c) {
+  let cls;
+  try { cls = classify(ctx, staves, nolines, prims, {}); } catch (e) { console.error('classify failed', c.image, e.message); return; }
+  const spO = gt.staffSpace;
+  const gev = [];
+  for (const m of gt.measures) for (const evs of m.staves) for (const e of evs) if (e.kind === 'note' && (e.heads || e.bbox) && BEAMS[e.base] != null) gev.push(e);
+  const feat = new Float32Array(N_RFEAT);
+  const notes = cls.events.filter(e => e.kind === 'note' && e.stem && e.stem.dir);
+  const buf = Buffer.alloc(RREC * notes.length);
+  let n = 0;
+  for (const ev of notes) {
+    const ho = ev.heads.map(hd => ctx.toOrig(hd.cx, hd.cy));
+    let best = null, bd = 0.45 * spO;
+    for (const g of gev) {
+      if (g.heads) { for (const gh of g.heads) for (const p of ho) { const d = Math.hypot(p[0] - gh[0], p[1] - gh[1]); if (d < bd) { bd = d; best = g; } } continue; }
+      // synthetic GT (gen_synthetic) has no head list: head centre inside the event box, nearest event x
+      const [bx, by, bw, bh] = g.bbox, m = 0.2 * spO;
+      for (const p of ho) if (p[0] > bx - m && p[0] < bx + bw + m && p[1] > by - m && p[1] < by + bh + m) { const d = 0.3 * Math.abs(p[0] - g.x) / 3; if (d < bd) { bd = d; best = g; } }
+    }
+    if (!best) { rstats.unmatched++; continue; }
+    const label = BEAMS[best.base];
+    stemFeatures(ctx, ev.stem, ev.heads, ev.rule, feat);
+    const o = n * RREC;
+    buf[o] = label;
+    for (let q = 0; q < RNG; q++) buf.writeFloatLE(feat[RNP + q], o + 1 + 4 * q);
+    for (let q = 0; q < RNP; q++) buf[o + 1 + 4 * RNG + q] = Math.max(0, Math.min(255, Math.round(feat[q] * 180 + 20)));
+    rstats.perClass[label]++;
+    n++;
+  }
+  fs.writeSync(rfd, buf, 0, n * RREC);
+  rstats.images++; rstats.samples += n;
+  rstats.perImage.push({ name: path.basename(c.image), kept: n });
+}
 
 /** Note-head candidates labelled by GT head centres (same as extract_heads.mjs). */
 function headSamples(ctx, staves, nolines, gt, c) {
