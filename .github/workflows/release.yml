@@ -6,7 +6,9 @@ name: Release
 # Triggers
 #   • push to main  → releases automatically when v<version> has no complete release yet
 #                     (bump app/version.json, push, done — no tag needed). A failed build is
-#                     retried on the next push to main because the release is still incomplete.
+#                     retried on the next push to main because the release is still incomplete;
+#                     only the missing platform is rebuilt. A debug-signed APK (marker file
+#                     JSE-<ver>.apk.debug-key.txt) is rebuilt once the signing secret exists.
 #   • push a v* tag → same, for that tag (the tag must match app/version.json)
 #   • manual run    → Actions → Release → Run workflow (force: rebuild even if complete)
 # The web bundle / version.json go to GitHub Pages via build-web.yml.
@@ -36,6 +38,8 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
       build: ${{ steps.check.outputs.build }}
+      win: ${{ steps.check.outputs.win }}
+      android: ${{ steps.check.outputs.android }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,16 +66,21 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
           TAG: ${{ steps.meta.outputs.tag }}
           FORCE: ${{ inputs.force || false }}
+          HAS_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && 'yes' || '' }}
         run: |
           set -uo pipefail
-          BUILD=true
+          WIN=true; AND=true
           if [ "$FORCE" != "true" ] && gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > assets.txt 2>/dev/null; then
-            if grep -qx "JSE-Setup-${VERSION}.exe" assets.txt && grep -qx "latest.yml" assets.txt && grep -qx "JSE-${VERSION}.apk" assets.txt; then
-              BUILD=false
+            if grep -qx "JSE-Setup-${VERSION}.exe" assets.txt && grep -qx "latest.yml" assets.txt; then WIN=false; fi
+            if grep -qx "JSE-${VERSION}.apk" assets.txt; then
+              AND=false
+              # debug-signed APK: rebuild it once the signing secret is available
+              if grep -qx "JSE-${VERSION}.apk.debug-key.txt" assets.txt && [ -n "$HAS_KEY" ]; then AND=true; fi
             fi
           fi
-          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
-          if [ "$BUILD" = "true" ]; then echo "Building $TAG"; else echo "$TAG is already released with every file — nothing to do (bump app/version.json to release again)"; fi
+          BUILD=false; if [ "$WIN" = "true" ] || [ "$AND" = "true" ]; then BUILD=true; fi
+          { echo "build=$BUILD"; echo "win=$WIN"; echo "android=$AND"; } >> "$GITHUB_OUTPUT"
+          if [ "$BUILD" = "true" ]; then echo "Building $TAG (windows=$WIN android=$AND)"; else echo "$TAG is already released with every file — nothing to do (bump app/version.json to release again)"; fi
 
       - name: Point the tag at this commit
         if: steps.check.outputs.build == 'true' && github.ref_type != 'tag'
@@ -124,6 +133,7 @@ jobs:
 
   windows:
     needs: [prepare, create-release]
+    if: needs.prepare.outputs.win == 'true'
     uses: ./.github/workflows/build-windows.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}
@@ -133,6 +143,7 @@ jobs:
 
   android:
     needs: [prepare, create-release]
+    if: needs.prepare.outputs.android == 'true'
     uses: ./.github/workflows/build-android.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}
