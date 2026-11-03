@@ -364,7 +364,7 @@ export class UI {
     app.addEventListener('dirty', () => this.updateTitle());
     app.addEventListener('change', () => this.scheduleOptions());
     app.addEventListener('document', () => { this.updateTitle(); this.renderPanels(); this.reviewState = this.reviewState?.scoreRef === app.score ? this.reviewState : null; this.updateReviewBar(); });
-    app.addEventListener('layout', () => { this.scheduleThumbs(); this.updateStatus(); this.drawReviewMarks(); });
+    app.addEventListener('layout', () => { this.scheduleThumbs(); this.updateStatus(); this.drawReviewMarks(); if (this.reviewState?.lowLyrics?.length) this.updateReviewBar(); });
     app.addEventListener('zoom', () => this.updateStatus());
     app.addEventListener('page', () => this.updateStatus());
     app.addEventListener('viewmode', () => this.updateStatus());
@@ -1174,29 +1174,45 @@ export class UI {
 
   // ---------------------------------------------------------------- OMR review support (after recognition)
   setReview(state) { this.reviewState = state ? { ...state, scoreRef: this.app.score } : null; this.updateReviewBar(); this.drawReviewMarks(); this.updateSourcePeek(); }
+  /** Uncertain OMR lyrics that still read what was recognised (an edited syllable counts as checked). */
+  pendingLowLyrics() {
+    const st = this.reviewState; if (!st?.lowLyrics?.length || !this.app.score) return [];
+    return st.lowLyrics.filter(l => { const f = findEvent(this.app.score, l.eventId); return f && (f.ev.lyrics || []).some(x => (x.verse || 1) === l.verse && x.text === l.text); });
+  }
+  /** Measures to visit with "다음": uncertain measures + measures holding unchecked lyrics, in score order. */
+  reviewTargets() {
+    const st = this.reviewState; if (!st || !this.app.score) return [];
+    const ids = new Set([...(st.low || []), ...this.pendingLowLyrics().map(l => l.measureId).filter(Boolean)]);
+    return this.app.score.measures.filter(m => ids.has(m.id)).map(m => m.id);
+  }
   updateReviewBar() {
     const bar = this.reviewBar; const st = this.reviewState;
-    if (!st || !st.low?.length) { bar.hidden = true; return; }
+    const lowLy = this.pendingLowLyrics();
+    if (!st || (!st.low?.length && !lowLy.length)) { bar.hidden = true; return; }
     bar.hidden = false;
-    bar.innerHTML = `${icon('warning')}<span>검토가 필요한 마디 <b>${st.low.length}</b>개</span><button class="btn sm" data-r="next">다음 ${icon('next')}</button><button class="btn sm" data-r="peek">${icon('photo')} 원본</button><button class="btn sm" data-r="done">${icon('check')} 검토 끝</button>`;
+    const what = [st.low?.length ? `마디 <b>${st.low.length}</b>개` : '', lowLy.length ? `가사 <b>${lowLy.length}</b>글자` : ''].filter(Boolean).join(' · ');
+    bar.innerHTML = `${icon('warning')}<span>검토가 필요한 ${what}</span><button class="btn sm" data-r="next">다음 ${icon('next')}</button><button class="btn sm" data-r="peek">${icon('photo')} 원본</button><button class="btn sm" data-r="done">${icon('check')} 검토 끝</button>`;
     bar.querySelector('[data-r=next]').addEventListener('click', () => this.nextReview());
     bar.querySelector('[data-r=peek]').addEventListener('click', () => this.toggleSourcePeek(true));
     bar.querySelector('[data-r=done]').addEventListener('click', () => this.setReview(null));
   }
   nextReview() {
-    const st = this.reviewState; if (!st?.low?.length) return;
-    st.idx = ((st.idx ?? -1) + 1) % st.low.length;
-    const mi = this.app.score.measures.findIndex(m => m.id === st.low[st.idx]);
+    const st = this.reviewState; const targets = this.reviewTargets(); if (!st || !targets.length) return;
+    st.idx = ((st.idx ?? -1) + 1) % targets.length;
+    const mi = this.app.score.measures.findIndex(m => m.id === targets[st.idx]);
     if (mi >= 0) { this.app.select({ type: 'measure', mi, si: 0 }); this.view.scrollToMeasure(mi, { center: true }); this.toggleSourcePeek(true); }
   }
   drawReviewMarks() {
-    const st = this.reviewState; if (!st?.low?.length || !this.app.layout) return;
-    const low = new Set(st.low);
+    const st = this.reviewState;
+    if (!st || !this.app.layout) { this.view.pageEls.forEach(el => { const svg = el.querySelector('svg.review-marks'); if (svg) svg.innerHTML = ''; }); return; }
+    const low = new Set(st.low || []);
+    const lowLy = new Set(this.pendingLowLyrics().map(l => `${l.eventId}:${l.verse}`));
     this.view.pageEls.forEach((el, pi) => {
       const p = this.app.layout.pages[pi]; let svg = el.querySelector('svg.review-marks');
       if (!svg) { svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'overlay review-marks'); el.appendChild(svg); }
       svg.setAttribute('viewBox', `0 0 ${p.width} ${p.height}`);
-      svg.innerHTML = p.geometry.measures.filter(m => low.has(m.measureId)).map(m => { const y0 = Math.min(...m.staves.map(s => s.y)) - 1.5, y1 = Math.max(...m.staves.map(s => s.y + s.h)) + 1.5; return `<rect class="omr-low" x="${m.x}" y="${y0}" width="${m.width}" height="${y1 - y0}" rx="0.6"/>`; }).join('');
+      svg.innerHTML = p.geometry.measures.filter(m => low.has(m.measureId)).map(m => { const y0 = Math.min(...m.staves.map(s => s.y)) - 1.5, y1 = Math.max(...m.staves.map(s => s.y + s.h)) + 1.5; return `<rect class="omr-low" x="${m.x}" y="${y0}" width="${m.width}" height="${y1 - y0}" rx="0.6"/>`; }).join('')
+        + (lowLy.size ? (p.geometry.texts || []).filter(t => t.kind === 'lyric' && lowLy.has(`${t.eventId}:${t.verse}`)).map(t => `<rect class="omr-low-ly" x="${t.x - 0.25}" y="${t.y - 0.1}" width="${t.w + 0.5}" height="${t.h + 0.2}" rx="0.35"><title>인식이 불확실한 가사 — 더블클릭해 고치기</title></rect>`).join('') : '');
     });
   }
   toggleSourcePeek(force = null) { this.peekOn = force ?? !this.peekOn; this.updateSourcePeek(); }

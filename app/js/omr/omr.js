@@ -670,7 +670,10 @@ export function segmentSymbols(ctx, staves, nolines) {
   }
   // --- thin vertical objects: stems and barlines ----------------------------
   const vobjs = findVerticalObjects(nolines, w, h, rnd(1.8 * sp), Math.max(3, rnd(1.0 * sp)));
-  const stems = vobjs.filter(o => o.width <= Math.max(2, 0.32 * sp));
+  // stem width limit adapts to the measured stroke width (blurred photos binarise stems 4–5 px wide)
+  const ws = vobjs.filter(o => o.y1 - o.y0 >= 2.5 * sp && o.width <= 0.5 * sp).map(o => o.width).sort((a, b) => a - b);
+  const stemMax = Math.max(2, 0.32 * sp, ws.length >= 8 ? ws[ws.length >> 1] + 1.5 : 0);
+  const stems = vobjs.filter(o => o.width <= Math.min(stemMax, 0.5 * sp));
   for (const s of stems) s.staff = staffOf(staves, (s.y0 + s.y1) / 2, sp);
   // learned note heads (heads.js) replace the morphological candidates when a model is loaded
   if (ctx.models && ctx.models.heads) {

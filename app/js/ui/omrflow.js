@@ -196,23 +196,27 @@ export async function scanDialog(app, ui, { files = null } = {}) {
     const all = results.flatMap(x => x.measures || []);
     const low = all.filter(m => m.confidence < 0.6);
     const warn = [...new Set(results.flatMap(x => x.warnings || []))];
+    // recognised lyrics (Korean): uncertain syllables are marked here and in the editor
+    const lyr = results.flatMap(x => x.lyrics || []);
+    const lowLy = lyr.filter(l => l.lowConfidence && l.eventId).map(l => ({ eventId: l.eventId, verse: l.verse || 1, text: l.text, measureId: l.measureId }));
     const conf = results.reduce((a, x) => a + (x.confidence || 0), 0) / results.length;
     const layout = engrave(score);
     const first = results[0];
-    const marks = (first.measures || []).map(m => `<rect class="${m.confidence < 0.6 ? 'low' : ''}" x="${m.bbox[0]}" y="${m.bbox[1]}" width="${m.bbox[2]}" height="${m.bbox[3]}" rx="4"><title>${Math.round(m.confidence * 100)}%</title></rect>`).join('');
+    const marks = (first.measures || []).map(m => `<rect class="${m.confidence < 0.6 ? 'low' : ''}" x="${m.bbox[0]}" y="${m.bbox[1]}" width="${m.bbox[2]}" height="${m.bbox[3]}" rx="4"><title>${Math.round(m.confidence * 100)}%</title></rect>`).join('')
+      + (first.lyrics || []).filter(l => l.lowConfidence && l.bbox).map(l => `<rect class="lowly" x="${l.bbox[0]}" y="${l.bbox[1]}" width="${l.bbox[2]}" height="${l.bbox[3]}" rx="2"><title>가사 "${escapeXml(l.text)}" — ${Math.round((l.confidence || 0) * 100)}%</title></rect>`).join('');
     const imgUrl = URL.createObjectURL(first._blob);
     step.innerHTML = `
-      <div class="omr-summary"><span class="chip ${conf < 0.6 ? 'warn' : ''}">신뢰도 ${Math.round(conf * 100)}%</span><span class="chip">${score.measures.length}마디</span><span class="chip">${score.parts.map(p => p.name).join(' · ')}</span><span class="chip">${effectiveTimeSig(score, 0).num}/${effectiveTimeSig(score, 0).den} · ${KEY_NAMES[effectiveKeySig(score, 0).fifths]}</span>${low.length ? `<span class="chip warn">확인 필요 ${low.length}마디</span>` : ''}${results.some(x => x._skipped) ? '<span class="chip warn">보표 수가 다른 쪽은 제외됨</span>' : ''}</div>
+      <div class="omr-summary"><span class="chip ${conf < 0.6 ? 'warn' : ''}">신뢰도 ${Math.round(conf * 100)}%</span><span class="chip">${score.measures.length}마디</span><span class="chip">${score.parts.map(p => p.name).join(' · ')}</span><span class="chip">${effectiveTimeSig(score, 0).num}/${effectiveTimeSig(score, 0).den} · ${KEY_NAMES[effectiveKeySig(score, 0).fifths]}</span>${low.length ? `<span class="chip warn">확인 필요 ${low.length}마디</span>` : ''}${lyr.length ? `<span class="chip">가사 ${lyr.length}글자</span>` : ''}${lowLy.length ? `<span class="chip warn">가사 확인 ${lowLy.length}</span>` : ''}${results.some(x => x._skipped) ? '<span class="chip warn">보표 수가 다른 쪽은 제외됨</span>' : ''}</div>
       ${warn.length ? `<ul class="omr-warn">${warn.slice(0, 5).map(w => `<li>${escapeXml(w)}</li>`).join('')}</ul>` : ''}
       <div class="omr-split">
         <div class="omr-pane"><div class="img-wrap"><img src="${imgUrl}" alt="원본"><svg class="marks" viewBox="0 0 ${first._w} ${first._h}" preserveAspectRatio="none">${marks}</svg></div></div>
         <div class="omr-pane">${layout.pages[0]?.svg || ''}</div>
       </div>
-      <p>왼쪽 원본에서 <b style="color:var(--warn)">주황색</b> 마디는 인식이 불확실한 곳입니다. 편집기로 가져온 뒤 원본과 비교하며 고칠 수 있습니다.</p>`;
+      <p>왼쪽 원본에서 <b style="color:var(--warn)">주황색</b> 마디${lowLy.length ? '·가사' : ''}는 인식이 불확실한 곳입니다. 편집기로 가져온 뒤 원본과 비교하며 고칠 수 있습니다.${lyr.length ? ' 가사는 글자를 더블클릭하면 바로 고칠 수 있습니다.' : ''}</p>`;
     r.querySelector('[data-b=apply]').hidden = false;
     r.querySelector('[data-b=append]').hidden = !app.score?.measures.some(m => m.staves.some(sm => sm.voices.some(v => v.some(e => e.kind === 'note')))) || totalStaffCount(app.score) !== totalStaffCount(score);
     r.querySelector('[data-b=retry]').hidden = false;
-    r._score = score; r._low = low.map(m => m.measureId);
+    r._score = score; r._low = low.map(m => m.measureId); r._lowLy = lowLy;
   };
   const res = await showDialog({
     title: '사진으로 악보 인식', wide: true, body,
@@ -258,7 +262,9 @@ export async function scanDialog(app, ui, { files = null } = {}) {
     app.setScore(score, { fileName: null, dirty: true });
     ui.view.fit('width');
   }
-  ui.setReview({ low: dlgRoot._low });
-  if (dlgRoot._low.length) { ui.toast(`인식 완료 — 확인이 필요한 마디 ${dlgRoot._low.length}개를 표시했습니다`, 'ok', { timeout: 5000 }); ui.toggleSourcePeek(true); }
+  const lowLy = dlgRoot._lowLy || [];
+  ui.setReview({ low: dlgRoot._low, lowLyrics: lowLy });
+  const parts = [dlgRoot._low.length ? `마디 ${dlgRoot._low.length}개` : '', lowLy.length ? `가사 ${lowLy.length}글자` : ''].filter(Boolean);
+  if (parts.length) { ui.toast(`인식 완료 — 확인이 필요한 ${parts.join(', ')}를 주황색으로 표시했습니다`, 'ok', { timeout: 5000 }); ui.toggleSourcePeek(true); }
   else ui.toast('인식 완료 — 원본과 비교하며 수정해 보세요', 'ok');
 }

@@ -114,6 +114,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 #app[data-tool="lyrics"] #canvas, #app[data-tool="chord"] #canvas, #app[data-tool="text"] #canvas { cursor: text; }
 .ob-txt { font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 600; font-size: 13px; white-space: nowrap; padding: 0 2px; }
 .overlay .omr-low { fill: rgba(255,159,10,.14); stroke: var(--warn); stroke-width: .18; }
+.overlay .omr-low-ly { fill: rgba(255,159,10,.22); stroke: var(--warn); stroke-width: .12; }
 
 /* ---------- top bar ---------- */
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; letter-spacing: -.02em; margin-right: 4px; }
@@ -274,6 +275,7 @@ input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
 .omr-pane .marks rect { fill: rgba(10,132,255,.08); stroke: rgba(10,132,255,.75); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .omr-pane .marks rect.low { fill: rgba(255,159,10,.2); stroke: var(--warn); }
 .omr-pane .marks rect.cur { stroke: var(--danger); stroke-width: 3; }
+.omr-pane .marks rect.lowly { fill: rgba(255,159,10,.28); stroke: var(--warn); stroke-width: 1.5; }
 .omr-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .drop-zone { border: 1.5px dashed var(--field-stroke); border-radius: var(--r-l); padding: 28px 16px; text-align: center; color: var(--muted); background: var(--control); }
 .drop-zone.over { border-color: var(--accent); background: var(--accent-soft); }

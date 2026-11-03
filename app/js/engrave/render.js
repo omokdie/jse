@@ -99,8 +99,11 @@ function assemblePage(score, pg, pi, pageCount, margin, titleH, options) {
   if (pi === 0 && titleH) {
     const m = score.meta; let y = margin.top + SP.titleSize;
     const cx = W / 2;
-    if (m.title) { parts.push(`<text class="title" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${SP.titleSize}" font-weight="700" data-field="title">${escapeXml(m.title)}</text>`); geometry.texts.push({ field: 'title', x: cx - 20, y: y - SP.titleSize, w: 40, h: SP.titleSize * 1.2 }); y += SP.subtitleSize * 1.4; }
-    if (m.subtitle) { parts.push(`<text class="subtitle" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${SP.subtitleSize}" data-field="subtitle">${escapeXml(m.subtitle)}</text>`); y += SP.subtitleSize * 1.4; }
+    // long titles (e.g. a photo's file name) shrink to fit between the margins instead of running off the page
+    const avail = W - margin.left - margin.right;
+    const fit = (text, size, bold = false) => { const w = textWidth(text, size, bold) * 1.05; return w > avail ? Math.max(size * 0.45, size * avail / w) : size; };
+    if (m.title) { const fs = fit(m.title, SP.titleSize, true), tw = Math.min(avail, textWidth(m.title, fs, true) * 1.05); parts.push(`<text class="title" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${f3(fs)}" font-weight="700" data-field="title">${escapeXml(m.title)}</text>`); geometry.texts.push({ field: 'title', x: cx - Math.max(20, tw / 2), y: y - SP.titleSize, w: Math.max(40, tw), h: SP.titleSize * 1.2 }); y += SP.subtitleSize * 1.4; }
+    if (m.subtitle) { parts.push(`<text class="subtitle" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${f3(fit(m.subtitle, SP.subtitleSize))}" data-field="subtitle">${escapeXml(m.subtitle)}</text>`); y += SP.subtitleSize * 1.4; }
     const ry = margin.top + titleH - 3;
     if (m.composer) parts.push(`<text class="composer" x="${f3(W - margin.right)}" y="${f3(ry)}" text-anchor="end" font-size="${SP.composerSize}" data-field="composer">${escapeXml(m.composer)}</text>`);
     if (m.arranger) parts.push(`<text class="composer" x="${f3(W - margin.right)}" y="${f3(ry - SP.composerSize * 1.3)}" text-anchor="end" font-size="${SP.composerSize}" data-field="arranger">${escapeXml(m.arranger)}</text>`);
