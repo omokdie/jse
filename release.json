@@ -1,5 +1,5 @@
 {
   "_comment": "Release metadata merged into the published version.json (see RELEASING.md). androidMinNative: raise it to the current version whenever the Android NATIVE code (mobile/android) changed in a way the OTA web bundle cannot carry — devices below it are offered the APK instead. notes: shown in the in-app update prompt.",
   "androidMinNative": "1.0.0",
-  "notes": ""
+  "notes": "사진 인식 개선: 휴대폰 사진의 원근·휨을 바로잡아 인식(사진 정확도 약 52%→61%), 한국어 가사 자동 인식(1·2절), 불확실한 마디·가사 주황색 표시. 피날레(.musx) 파일 열기, 피날레 방식 편집 도구, 음표·쉼표 묶음 버튼, 태블릿 화면 지원."
 }

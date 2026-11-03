@@ -194,7 +194,8 @@ MIME `application/x-scoresnap`, extension `.ssnap`.
 ```js
 export async function recognize(image, options = {}, onProgress = () => {}) → RecognitionResult
 // image: { width, height, data: Uint8ClampedArray (RGBA) }   — same shape as ImageData; works in browser & Node
-// options: { parts?: "auto"|1|2, assumeGrandStaff?: boolean, timeSig?: {num,den}, keyFifths?: number, debug?: boolean }
+// options: { parts?: "auto"|1|2, assumeGrandStaff?: boolean, timeSig?: {num,den}, keyFifths?: number, debug?: boolean,
+//            lyrics?: boolean /* default true; false skips the Korean lyric stage */ }
 // onProgress({ stage: "preprocess"|"staves"|"symbols"|"assemble", percent: 0..100, message })
 RecognitionResult {
   score: ScoreDoc,                       // valid ScoreDoc (one Source entry referencing this image, id "src1")
@@ -203,9 +204,21 @@ RecognitionResult {
   staves: { bbox:[x,y,w,h], lineYs:number[], spacing:number, partIndex, staffIndex, systemIndex }[],
   measures: { measureId, bbox:[x,y,w,h], confidence }[],
   symbols?: { kind, bbox, confidence, eventId? }[],   // when options.debug
-  deskewAngle: number, binarizedPreview?: ImageData-like (debug)
+  deskewAngle: number, binarizedPreview?: ImageData-like (debug),
+  // Korean lyric stage (omr/lyrics.js + omr/hangul.js, model weights in omr/hangul-weights.js)
+  lyrics: { eventId|null, measureId|null, staffIndex, systemIndex, verse, text, confidence: 0..1,
+            lowConfidence: boolean /* confidence < 0.8 */, bbox:[x,y,w,h] /* original px */, alternatives: string[] }[],
+  lyricLines: { staffIndex, systemIndex, verse, text, bbox, confidence, syllables }[],
+  lyricStats: { lines, tokens, reads, ms },
 }
 ```
+Lyrics: text lines below each staff (and between the staves of a system) are read syllable by syllable
+(Hangul MLP over gradient features; any of the 11,172 syllables, KS X 1001 preferred, word-frequency prior)
+and written into the score as `event.lyrics = [{ verse, text, syllabic:'single' }]` — one Hangul syllable per
+note, like the editor's Korean input. Rests and tied continuation notes get none; `1.`/`2.` set the verse,
+otherwise stacked lines are verses 1, 2, … top to bottom. `confidence` = recognition × note-alignment quality
+(halved when unattached). The review dialog and the editor mark `lowConfidence` syllables in orange until
+they are edited (`ui.reviewState.lowLyrics`). Training/eval: `tools/omr/hangul/README.md`.
 Requirements: pure JS, no DOM (runs in a Worker and in Node for tests), deterministic,
 ≤ ~10 s for a 2500×3500 photo on a mid-range phone. Must handle: slight rotation (±5°),
 uneven lighting, JPEG artefacts, 1–2 staves per system (piano), treble/bass clefs,

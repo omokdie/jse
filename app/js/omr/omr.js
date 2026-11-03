@@ -1429,6 +1429,22 @@ const yieldNow = () => new Promise(r => setTimeout(r, 0));
  * image: { width, height, data: Uint8ClampedArray RGBA }
  */
 export async function recognize(image, options = {}, onProgress = () => {}) {
+  // pipeline: 'legacy' (original), 'photo' (robust front end + rectification +
+  // learned heads), or 'auto' (default): the fast original pipeline first; if
+  // its result is not confident (typically a photo), the photo pipeline runs
+  // too and the more confident result is returned.
+  const mode = options.legacyPreprocess ? 'legacy' : (options.pipeline || 'auto');
+  if (mode === 'legacy') return recognizeOnce(image, { ...options, legacyPreprocess: true }, onProgress);
+  if (mode === 'photo') return recognizeOnce(image, { ...options, legacyPreprocess: false }, onProgress);
+  const scaled = (a, b) => (p) => onProgress({ ...p, percent: a + (b - a) * (p.percent || 0) / 100 });
+  const first = await recognizeOnce(image, { ...options, legacyPreprocess: true }, scaled(0, 40));
+  if (first.staves.length && first.confidence >= AUTO_KEEP_CONFIDENCE) { onProgress({ stage: 'assemble', percent: 100, message: '완료' }); return { ...first, pipeline: 'legacy' }; }
+  const second = await recognizeOnce(image, { ...options, legacyPreprocess: false }, scaled(40, 100));
+  return second.staves.length && second.confidence > first.confidence ? { ...second, pipeline: 'photo' } : { ...first, pipeline: 'legacy' };
+}
+const AUTO_KEEP_CONFIDENCE = 0.9;
+
+async function recognizeOnce(image, options = {}, onProgress = () => {}) {
   const progress = (stage, percent, message) => { try { onProgress({ stage, percent, message }); } catch (_) { /* ignore */ } };
   progress('preprocess', 2, '이미지 전처리 중…');
   await yieldNow();

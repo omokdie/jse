@@ -1,52 +1,66 @@
 # JSE — 작업 인계 문서 (Handoff)
 
-> 갱신: 2026-11-03 21:50 KST. 다음 모델/세션은 이 문서 → `README.md` → `SPEC.md` 순서로 읽으면 됩니다.
-> 작업 폴더: `/home/claude/scoresnap` (클라우드 세션 안에만 존재 — 세션이 바뀌면 사용자에게 받은 zip을 풀어서 사용)
+> 갱신: 2026-11-04 00:00 KST. 다음 모델/세션은 이 문서 → `README.md` → `SPEC.md` → `RELEASING.md` 순서로 읽으면 됩니다.
+> 소스: **GitHub `omokdie/jse` (공개, main)** — 이 저장소가 원본입니다. 클라우드 세션의 작업 폴더는 `/home/claude/scoresnap`(origin = 위 저장소).
 
 ## 1. 사용자 요구사항 (반영 상태)
 
 | # | 요구 | 상태 |
 |---|---|---|
-| 1 | 카메라/인터넷 악보 사진을 분석해 편집 가능한 악보로 | ✅ (인식 품질은 §4 참고) |
-| 2 | 전용 확장자 저장 + PDF·PNG·JPG 등 내보내기 | ✅ `.ssnap` / PDF·PNG·JPG·SVG·MusicXML·MXL·MIDI |
-| 3 | 즉석 수정, 기존 악보 프로그램 참고, 초보자도 쉽게 | ✅ MuseScore식 입력 + 간단 모드 + 상황별 옵션 바 |
-| 4 | 복사·붙여넣기, 여러 페이지 한눈에 보기 등 편의 기능 | ✅ 보기 5종(그리드=아트보드 방식), 반복, 자동저장 등 |
-| 5 | 모바일: 같은 파일, 모바일에 맞는 UI | ✅ 화면 맞춤 보기, 하단 탭/입력 바, 바텀시트, 터치 입력 |
-| 6 | 인터넷 연결 시 자동 업데이트 + 완료 표시 | ✅ 웹(실제 테스트 통과), Windows/Android(코드 작성, 실기기 미검증) |
-| 7 | Windows 설치형 exe, Android apk | ✅ 빌드 설정·CI 작성 (이 환경은 외부망 차단이라 실제 빌드는 GitHub Actions/사용자 PC에서) |
+| 1 | 카메라/인터넷 악보 사진을 분석해 편집 가능한 악보로 | ✅ 사진 원근·휨 보정 파이프라인 추가 (정확도 §4) |
+| 2 | 전용 확장자 저장 + PDF·PNG·JPG 등 내보내기 | ✅ `.ssnap` 유지 / PDF·PNG·JPG·SVG·MusicXML·MXL·MIDI |
+| 3 | 즉석 수정, 기존 악보 프로그램 참고, 초보자도 쉽게 | ✅ **피날레 방식 도구**(SPEC §5c) + 간단 모드 + 상황별 옵션 바 |
+| 4 | 복사·붙여넣기, 여러 페이지 한눈에 보기 등 편의 기능 | ✅ 보기 5종, 범위 끌어서 복사, 반복, 자동저장 등 |
+| 5 | 모바일: 같은 파일, 모바일에 맞는 UI | ✅ 휴대폰·**태블릿**·PC 화면 자동 전환 (`native.js classifyLayout`) |
+| 6 | 인터넷 연결 시 자동 업데이트 + 완료 표시 | ✅ 웹(테스트 통과) · Windows(electron-updater, GitHub Releases) · Android(웹 번들 OTA) |
+| 7 | Windows 설치형 exe, Android apk | ✅ GitHub Actions에서 실제 빌드 성공 (v1.0.0: exe 84MB, apk 5MB) |
 | 8 | 가사·기타 코드·드럼 악보 등 모든 요소 편집 | ✅ |
 | 9 | 리퀴드 글라스 UI, 아이콘 직접 그리기 | ✅ |
-| 10 | 창 최소화/최대화/닫기 버튼 영역 | ✅ Electron 프레임리스 + 유리 버튼 (`ui.js buildWindowControls`) |
-| 11 | 이름 JSE | ✅ 사용자에게 보이는 곳 전부. 내부 식별자는 `scoresnap` 유지 (SPEC 3행) |
-| 12 | 아이콘: "JSE" 글자 + 오선 | ✅ `tools/icons/make_wordmark.py` (Inter Display ExtraBold 윤곽 변환) |
-| 13 | 상단 버튼 정리 (Adobe식) | ✅ 제목/메뉴 바 · 상황별 옵션 바 · 왼쪽 도구 레일 · 도킹 패널 |
+| 10 | 창 최소화/최대화/닫기 버튼 | ✅ |
+| 11 | 이름 JSE | ✅ (내부 식별자는 `scoresnap` 유지, SPEC 머리말) |
+| 12 | 아이콘: "JSE" 글자 + 오선 | ✅ |
+| 13 | 상단 버튼 정리 (Adobe식) | ✅ + **포토샵식 묶음 버튼**(마우스를 올리면 종류 선택: 온음표~64분음표, 온쉼표~64분쉼표 등) |
+| 14 | Finale `.musx` 파일 열기 | ✅ `io/musx.js` (실제 Finale 파일 1,373개 오류 없이 가져오기) |
+| 15 | 이음줄 선택·적용이 어려움, 음표가 포인터와 다른 곳에 들어감 | ✅ 모양 도구(음표→음표 끌기, 클릭 선택+핸들), 음표 입력 시 놓일 자리 미리보기 |
+| 16 | 쉼표 종류별 입력 | ✅ 팔레트·옵션 바·휴대폰 입력 바 모두 |
+| 17 | 사진 인식에서 한국어 가사 읽기 | ✅ `omr/lyrics.js` + `omr/hangul.js` (§4) |
+| 18 | 여러 사진으로 학습해 인식 정확도 개선 | 🔶 개선됨(사진 52→61%), 목표 80%에는 미달 (§4) |
+| 19 | GitHub 설정 | ✅ 저장소·Pages·Actions·Android 서명 키(Secrets) 완료 |
 
-**미결정(사용자 답변 대기)**: 전용 확장자를 `.ssnap` 그대로 둘지, 새 이름으로 바꿀지 (`.jse`는 Windows의 JScript 스크립트 확장자라 쓰면 안 됨 → `.jses` 등 제안).
+결정 사항: 확장자는 `.ssnap` 유지(`.jse`는 Windows JScript 확장자라 사용 불가). 저장소는 공개(무료 Pages + 자동 업데이트에 필요).
 
 ## 2. 구조 요약
 
-- `app/` 순수 ES 모듈 웹앱(빌드 불필요). 진입점 `js/main.js` → `ui/ui.js`(UI 컨트롤러: 제목바·옵션바·도구 레일·메뉴·텍스트 입력·파일) → `app.js`(상태·히스토리) → `model/commands.js`(모든 편집) → `engrave/*`(자체 조판 엔진, SVG) → `view/canvas.js`(페이지 표시·히트테스트).
-- 인식: `omr/omr.js`(순수 JS, Worker) + `ui/omrflow.js`(촬영→준비→인식→검토→적용, PDF는 pdf.js).
-- 입출력: `io/ssnap.js`, `io/musicxml.js`(자체 XML 파서, 왕복 테스트 통과), `io/midi.js`, `io/export.js`, `io/storage.js`(IndexedDB).
-- 업데이트: `update.js` + `sw.js`(버전은 `mobile/scripts/sync-www.mjs`의 `finalizeWebTree`가 스탬프).
-- 패키징: `electron/`(창 제어 IPC `scoresnap:win`, 네이티브 메뉴는 macOS만), `mobile/`(Capacitor 6, OTA 업데이트 Java 플러그인), `.github/workflows/`.
-- 아이콘: `tools/icons/make_wordmark.py` → `make-icons.mjs`(PNG 전체) → `make-ico.mjs`(Windows .ico, 앱+문서 아이콘).
-- 미리보기: `node tools/build-demo.mjs` → `dist/demo` (라이브러리는 cdnjs, 다운로드는 차단 안내) → claude.ai 아티팩트 slug `91bc8359-75b7-48e0-a9d8-4bd48d714ddb` (publish_files로 재게시).
+- `app/` 순수 ES 모듈 웹앱(빌드 불필요). `js/main.js` → `ui/ui.js`(UI 컨트롤러) → `app.js`(상태·도구·히스토리) → `model/commands.js`(모든 편집) → `engrave/*`(자체 조판, SVG) → `view/canvas.js`(표시·히트테스트).
+- 편집 상호작용: `editor/tools.js`(도구 정의·입력 위치 계산·모양/아티큘레이션/표현 적용), `editor/pointer.js`(도구별 마우스/터치), `editor/keyboard.js`(피날레식 단축키·메타툴). 묶음 버튼: `ui/flyout.js` + `ui/groups.js`, 팔레트 `ui/palette.js`.
+- 인식: `omr/omr.js`(auto: 기존 파이프라인 → 신뢰도 0.9 미만이면 사진 파이프라인도 실행해 더 나은 결과), 단계별 모듈 `preprocess/staves/dewarp/barlines/heads/classifiers/lyrics/hangul.js`, 학습된 모델 `omr/models/heads.js`(음표머리), `omr/hangul-weights.js`(한글). 흐름 UI `ui/omrflow.js`.
+- 입출력: `io/ssnap.js`, `io/musicxml.js`, `io/musx.js`(Finale), `io/midi.js`, `io/export.js`, `io/storage.js`.
+- 배포: `.github/workflows/` — `build-web.yml`(main push → Pages), `release.yml`(main 에 새 버전 → 태그·릴리스·exe·apk 자동). 이 클라우드 세션에서는 **태그 push가 막혀 있음**(브랜치 push만 가능) → 버전 올려 main 에 push 하는 방식으로 릴리스.
+- 미리보기: `node tools/build-demo.mjs` → `dist/demo` → claude.ai 아티팩트 slug `91bc8359-75b7-48e0-a9d8-4bd48d714ddb`.
 
 ## 3. 테스트 / 검증 방법
 
 ```bash
-node --test tools/tests/*.test.js                 # 14개 통과 (편집 9 + MusicXML 5)
-python3 -m http.server 8765 -d app                 # 앱 실행
-node tools/e2e/shot.mjs http://localhost:8765/ out.png desktop|mobile [script.js]   # 스크린샷 + 콘솔 에러
-INIT=<fake-electron.js> node tools/e2e/shot.mjs …  # window.ScoreSnapNative 흉내 → 창 버튼 표시 확인
-node tools/omr/run_eval.mjs                        # 인식 정확도
+node --test tools/tests/*.test.js                  # 19개 통과 (편집·MusicXML·한글/가사 인식)
+python3 -m http.server 8765 -d app                  # 앱 실행
+node tools/e2e/shot.mjs http://localhost:8765/ out.png desktop|mobile|tablet|tablet-portrait|android-tablet [script.js]
+node tools/musx/check.mjs <Finale 파일/폴더>        # Finale 가져오기 일괄 점검
+node tools/omr/stage_eval.mjs --dir tools/omr/corpus/eval_photo   # 사진 인식 정확도 (eval_clean, base, aug 도)
+node tools/omr/run_eval.mjs --dir tools/omr/corpus_ko --report tools/omr/eval_report_lyrics.md   # 가사 인식
 ```
-브라우저에서 확인 완료: 부팅·편집·키보드 입력·가사(한글 자동 분배)·컨텍스트 메뉴·모바일 터치 입력·사진 인식 전체 흐름·모든 내보내기·.ssnap 왕복·PWA 자동 업데이트(1.0.0→1.0.1, 완료 알림).
+릴리스 확인: `https://api.github.com/repos/omokdie/jse/actions/runs`, 체크런 주석(`/check-runs/<job id>/annotations`)으로 경고 확인. APK 서명 지문은 `python3 tools/apkcert.py <apk>`(APK Signing Block v2 인증서 SHA-256)으로 확인 — 정식 키 지문 `55:8D:D9:07:…:10:55`.
 
-## 4. 남은 일 (우선순위)
+## 4. 사진 인식 현황과 남은 일
 
-1. **사진 인식 정확도 개선** — `tools/omr/eval_report.md`: 깨끗한 이미지 음높이 91%/박자 93%, 사진형(회전·원근·휨·조명) 음높이 55%/박자 53%. 원근 보정(네 모서리 검출 + 수동 조정 UI), 오선 휨 추적, 적응형 이진화 개선이 다음 단계.
-2. Electron/Android 실제 빌드 검증(외부망 필요) — CI 첫 실행 로그 확인.
-3. 확장자 결정 반영(§1).
-4. 세부: 운지 번호 전용 렌더링, 복잡한 반복 기호 재생, MIDI 가져오기, 이조 악기 표시.
+| 시험 세트 | 음높이 / 박자 / 마디 수 정확 |
+|---|---|
+| 깨끗한 악보 40장 | 92.0 / 93.9 / 85.0 % |
+| 실제 같은 사진 60장 | 60.9 / 61.6 / 35.0 % (이전 52.0 / 47.6 / 10.0) |
+| 종류별(음높이/박자) | 스캔 90.7/90.1 · 평평한 사진 72.1/65.8 · 휜 페이지 51.0/64.6 · 저해상도 28.0/29.1 |
+| 한국어 가사 (깨끗 / 사진형) | 글자 99.4 % / 95.9 %, 음표에 맞게 붙음 99.2 % / 94.0 % (음표를 찾은 경우) |
+
+남은 일(우선순위):
+1. 사진 인식: 쉼표·임시표·음자리표·숫자 분류 모델 학습(배선은 되어 있음, `classifiers.js`), 학습 페이지 160장 전부 사용, 저해상도 사진, 마디선 오검출, 조표 기호 붙음, 박자표, 셋잇단·꼬리 리듬. 음악 글꼴이 FreeSerif 하나뿐이라 실제 악보 글꼴로 일반화 위험 → 여러 글꼴로 학습 데이터 생성. 상세: `tools/omr/IMPROVEMENTS.md`.
+2. 가사: 영어 가사(단어·하이픈), 오선 위 가사, 작은 글씨(10–12px).
+3. Windows 코드 서명 인증서(없으면 SmartScreen 경고). 액션 버전(Node 20 deprecated 경고: checkout/setup-node/setup-java/upload-artifact 새 주 버전으로).
+4. 세부: 운지 번호 전용 렌더링, 복잡한 반복 재생, MIDI 가져오기, 가사 아래 이음줄 충돌 회피.
