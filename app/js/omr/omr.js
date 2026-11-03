@@ -1040,20 +1040,21 @@ function attachDotsAndAccidentals(ctx, events, comps, used) {
         if (ev.kind !== 'note') continue;
         for (const hd of ev.heads) {
           const gap = hd.x0 - c.x1;
-          if (gap < -0.1 * sp || gap > 1.4 * sp) continue;
+          // (chords: accidentals are staggered in columns, the second column ~2 sp left of the heads)
+          if (gap < -0.1 * sp || gap > (ev.heads.length > 1 ? 2.6 : 1.4) * sp) continue;
           const dy = Math.abs(c.cy - hd.cy);
-          if (dy < 1.1 * sp && (!best || gap + dy * 0.5 < best.cost)) best = { hd, cost: gap + dy * 0.5 };
+          if (dy < 1.1 * sp && (!best || gap + dy * 0.5 < best.cost)) best = { hd, cost: gap + dy * 0.5, gap };
         }
       }
-      if (!best) continue;
+      if (!best || (best.hd.accidental && best.hd.accGap != null && best.hd.accGap <= best.gap)) continue;
       const m = bestTemplate(ctx.cc.labels, w, c, ['sharp', 'flat', 'natural'], sp, 0.32);
       if (m && m.score >= 0.35 && (!glyphHook || m.name === m.top)) {
         // the flat's loop (lower part) marks the pitch; its bbox centre is ~0.45 sp higher
-        best.hd.accidental = m.name; best.hd.accConf = m.score; used.add(c.id);
+        best.hd.accidental = m.name; best.hd.accConf = m.score; best.hd.accGap = best.gap; used.add(c.id);
       }
     }
   }
-  if (glyphHook && glyphHook.probs && ctx.nolines && ctx.photoPipe) accidentalWindows(ctx, events);
+  if (glyphHook && glyphHook.probs && ctx.nolines) accidentalWindows(ctx, events);
 }
 
 /** Accidentals that touch their note head (blurred photos) are part of the
@@ -1071,14 +1072,15 @@ function accidentalWindows(ctx, events) {
       const hEnd = ev.staff && ev.staff.headerEnd != null ? ev.staff.headerEnd : 0;
       const xa = Math.max(0, Math.round(Math.max(hd.x0 - 1.9 * sp, hEnd))), xb = Math.min(w - 1, Math.round(hd.x0 - 0.12 * sp));
       if (xb - xa < 0.5 * sp) continue;
-      const ya = Math.max(0, Math.round(hd.cy - 1.9 * sp)), yb = Math.min(h - 1, Math.round(hd.cy + 1.9 * sp));
+      // (a flat reaches ~2.2 sp above its head: tall flats always touched a ±1.9 sp window)
+      const ya = Math.max(0, Math.round(hd.cy - 2.6 * sp)), yb = Math.min(h - 1, Math.round(hd.cy + 2.1 * sp));
       // columns next to the head: the accidental's ink starts within ~0.5 sp of the head
       let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1, n = 0;
       for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) if (nol[y * w + x]) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
       // the accidental touches (or almost touches) the head and does not run out of the window
       if (!n || x1 < hd.x0 - 0.35 * sp || x0 <= xa + 1 || y0 <= ya + 1 || y1 >= yb - 1) continue;
       const bw = (x1 - x0 + 1) / sp, bh = (y1 - y0 + 1) / sp;
-      if (bh < 1.6 || bh > 3.8 || bw < 0.4 || bw > 1.8 || n / ((x1 - x0 + 1) * (y1 - y0 + 1)) > 0.75) continue;
+      if (bh < 1.6 || bh > 3.9 || bw < 0.4 || bw > 1.8 || n / ((x1 - x0 + 1) * (y1 - y0 + 1)) > 0.75) continue;
       // the head must lie inside the accidental's vertical span (sharp / natural centred, flat: lower half)
       if (hd.cy < y0 + 0.2 * sp || hd.cy > y1 - 0.1 * sp) continue;
       const box = { x0, x1, y0, y1 };
@@ -1118,18 +1120,99 @@ function detectHeader(ctx, st, cc, options, warnings) {
   const inHeader = cc.comps.filter(c => c && c.x0 >= st.x0 - 0.5 * sp && c.x0 < st.x0 + 14 * sp && c.y1 > top - 4 * sp && c.y0 < bottom + 3 * sp && c.h >= 0.25 * sp)
     .sort((a, b) => a.x0 - b.x0);
   let x = st.x0;
-  // clef: first tall component
-  const clefComp = inHeader.find(c => c.h >= 2.4 * sp && c.w >= 1.2 * sp && c.x0 < st.x0 + 5 * sp);
+  // clef: the tall components of the staff start are scored by the glyph classifier — the first one
+  // is not always the clef (a rehearsal-mark box, a bracket piece or text at the staff start was read
+  // as a bass clef by its size, and the real clef after it was never looked at).  A clef overlaps its
+  // own staff (the treble clef of the staff above reaches into this header zone in piano music).
+  const onStaff = (c, min) => Math.min(c.y1, bottom) - Math.max(c.y0, top) >= min * sp;
+  const isTall = (c, xMax) => c.h >= 2.4 * sp && c.w >= 1.2 * sp && c.x0 < st.x0 + xMax * sp && onStaff(c, 1.5);
+  const tall = inHeader.filter(c => isTall(c, 5));
+  let clefComp = tall[0] || null, clefPick = null, clefIds = null, skipTo = -Infinity, weakClef = false;
+  if (glyphHook && glyphHook.probs) {
+    const cands = [];
+    const nol = ctx.nolines, H = ctx.h;
+    const inkBox = (x0, x1, y0, y1) => {
+      let a = Infinity, b = -1, c = Infinity, d = -1;
+      for (let yy = Math.max(0, y0); yy <= Math.min(H - 1, y1); yy++) for (let xx = Math.max(0, x0); xx <= Math.min(w - 1, x1); xx++) if (nol[yy * w + xx]) { if (xx < a) a = xx; if (xx > b) b = xx; if (yy < c) c = yy; if (yy > d) d = yy; }
+      return b < 0 ? null : { x0: a, x1: b, y0: c, y1: d };
+    };
+    const clefOf = (p) => ['gClef', 'fClef', 'cClef'].reduce((a, k) => (p[k] > p[a] ? k : a), 'gClef');
+    for (const c of inHeader) {
+      if (!isTall(c, 8)) continue;
+      const p = glyphHook.probs(c);
+      let name = clefOf(p), pb = p[name], none = p.none;
+      if (pb < 0.5 && c.w > 3.3 * sp && nol && ctx.photoPipe) {
+        // photos: a clef blurred into the key signature (or a brace) forms one wide component — its left part
+        for (const W of [2.3, 2.6, 2.9, 3.2]) for (const band of [false, true]) {
+          // (band: only the staff ± 0.6 sp — a slur or text above merged into the component)
+          const b = inkBox(c.x0, Math.round(c.x0 + W * sp), band ? Math.max(c.y0, Math.round(top - 0.6 * sp)) : c.y0, band ? Math.min(c.y1, Math.round(bottom + 0.6 * sp)) : c.y1);
+          if (!b || b.y1 - b.y0 + 1 < 2.4 * sp) continue;
+          const q = glyphHook.probs(b);
+          const nm = clefOf(q);
+          if (q[nm] > pb) { name = nm; pb = q[nm]; none = q.none; }
+        }
+      }
+      cands.push({ c, name, p: pb, none });
+      if (cands.length >= 4) break;
+    }
+    // the first candidate the classifier accepts as a clef; leading shapes it firmly rejects are skipped
+    clefPick = cands.find(q => q.p >= 0.5 && q.c.x0 < st.x0 + (q === cands[0] ? 5 : 8) * sp) || null;
+    if (clefPick) clefComp = clefPick.c;
+    else if (cands.length && (cands[0].none >= 0.9 || 1 - cands[0].none - cands[0].p >= 0.5)) {
+      // no clef shape among the tall components: rather "missing" (→ the clef of the same staff in the
+      // other systems) than a size-rule guess on a box or a word
+      // (the size rule only for shapes the classifier does not know — never for an accidental, a digit…)
+      clefComp = tall.find(c => { const p = glyphHook.probs(c); return p.none < 0.9 && 1 - p.none - p.gClef - p.fClef - p.cClef < 0.5; }) || null;
+      for (const q of cands) if (q.none >= 0.9 && q.c.x0 < st.x0 + 5 * sp) skipTo = Math.max(skipTo, q.c.x1); else break;
+    }
+    if (!clefPick) {
+      // a clef broken into pieces by staff-line removal (thin clef strokes, faint photos): unions of the
+      // first pieces on the staff, left to right, are classified as one window
+      const pieces = inHeader.filter(c => c.x0 > skipTo && c.x0 < st.x0 + 5 * sp && onStaff(c, -0.3));
+      let u = null, best = null;
+      const ids = [];
+      for (const c of pieces.slice(0, 7)) {
+        const v = u ? { x0: Math.min(u.x0, c.x0), x1: Math.max(u.x1, c.x1), y0: Math.min(u.y0, c.y0), y1: Math.max(u.y1, c.y1), area: u.area + c.area } : { x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, area: c.area };
+        if ((v.x1 - v.x0 + 1) > 3.4 * sp) break;
+        u = v; ids.push(c.id);
+        const uw = (u.x1 - u.x0 + 1) / sp, uh = (u.y1 - u.y0 + 1) / sp;
+        if (uh < 2.4 || uw < 0.9 || ids.length < 2) continue;
+        const p = glyphHook.probs({ x0: u.x0, x1: u.x1, y0: u.y0, y1: u.y1, area: u.area });
+        const name = ['gClef', 'fClef', 'cClef'].reduce((a, k) => (p[k] > p[a] ? k : a), 'gClef');
+        if (p[name] >= 0.6 && (!best || p[name] > best.p)) best = { u: { ...u }, name, p: p[name], ids: ids.slice() };
+      }
+      if (best) {
+        const u = best.u;
+        clefComp = { id: best.ids[0], x0: u.x0, x1: u.x1, y0: u.y0, y1: u.y1, w: u.x1 - u.x0 + 1, h: u.y1 - u.y0 + 1, area: u.area };
+        clefIds = best.ids;
+      }
+      // nothing better: the size rule on the first tall shape the classifier does not read as another
+      // glyph, as a weak vote (a clef that falls apart into pieces — e.g. thin alto clefs — leaves only
+      // its curved half; a rehearsal box before a real clef is outvoted by the other staves)
+      // (not for a shape read as accidentals — merged key-signature sharps are as tall as an alto clef;
+      // the curved half of a broken alto clef reads as a digit)
+      if (!clefComp && tall.length) {
+        const p = glyphHook.probs(tall[0]);
+        if (p.sharp + p.flat + p.natural < 0.5) { clefComp = tall[0]; weakClef = true; }
+      }
+    }
+    st.clefCands = cands.map(q => ({ x: q.c.x0, w: q.c.w / sp, h: q.c.h / sp, name: q.name, p: q.p, none: q.none }));
+  }
   if (clefComp) {
     const hsp = clefComp.h / sp;
     if (hsp >= 5.0) st.clef = 'treble';
     else if (hsp >= 3.7 && hsp <= 4.7) st.clef = 'alto';
     else if (hsp >= 2.5 && hsp <= 3.7) st.clef = 'bass';
-    st.clefConf = st.clef ? 0.6 : 0;
+    st.clefConf = st.clef ? (weakClef ? 0.35 : 0.6) : 0;
     if (glyphHook) { const m = glyphHook(clefComp, ['gClef', 'fClef', 'cClef']); if (m && m.score >= 0.5) { st.clef = { gClef: 'treble', fClef: 'bass', cClef: 'alto' }[m.name]; st.clefConf = m.score; } }
-    if (st.clef) {
+    if (clefPick && clefPick.c === clefComp && clefPick.p >= 0.5) { st.clef = { gClef: 'treble', fClef: 'bass', cClef: 'alto' }[clefPick.name]; st.clefConf = clefPick.p; }
+    if (st.clef && weakClef) {
+      // a weak size-rule guess sets the clef type (a weak vote) but does not move the header end: the
+      // shape may be a chord or a merged figure at the staff start, whose notes must stay in the music
+      st.clefBox = null;
+    } else if (st.clef) {
       // the bass-clef dots are separate small components right of the curl
-      st.headerLabels.push(clefComp.id);
+      st.headerLabels.push(...(clefIds || [clefComp.id]));
       x = clefComp.x1 + 0.2 * sp;
       st.clefBox = clefComp;
       if (st.clef === 'bass') for (const c of inHeader) if (c.x0 > clefComp.x1 - sp && c.x0 < clefComp.x1 + 1.2 * sp && c.w < 0.7 * sp && c.h < 0.7 * sp) { st.headerLabels.push(c.id); x = Math.max(x, c.x1 + 0.2 * sp); }
@@ -1217,11 +1300,14 @@ function readKeyLearned(ctx, st, inHeader, x) {
     const p = glyphHook.probs(c);
     let [acc, pa] = accOf(p);
     let n = 0;
-    if (wsp <= 1.75 && pa >= 0.45 && pa >= p.natural) n = 1;
+    // (one accidental can be up to ~2.2 sp wide: Petaluma's sharp is 1.65 sp, blurred photos add more)
+    if (wsp <= 2.3 && pa >= 0.45 && pa >= p.natural) n = 1;
     let pn = pa;
-    if (wsp > 1.25 && nol) {
+    // two touching accidentals are ≥ ~1.8 sp wide (≈ 1 sp apart): a narrower unit that is clearly one
+    // accidental is not cut (the halves of a wide sharp look like sharps too: Petaluma read as 2 sharps)
+    if (wsp > (n && pa >= 0.9 ? 1.75 : 1.25) && nol) {
       // possibly k touching accidentals: try equal cuts, keep the most convincing
-      let best = n ? { k: 1, score: pa * (wsp <= 1.45 ? 1 : 0.8), acc } : null;
+      let best = n ? { k: 1, score: pa * (wsp <= 1.45 ? 1 : wsp <= 1.8 ? 0.85 : 0.7), acc } : null;
       for (let k = 2; k <= 7; k++) {
         const pw = c.w / k;
         if (pw < 0.55 * sp || pw > 1.75 * sp) continue;      // (handwritten-style fonts: sharps up to ~1.7 sp wide)
@@ -1279,7 +1365,9 @@ function readKeyLearned(ctx, st, inHeader, x) {
     units.push({ id: c.id, x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, w: c.w, h: c.h, area: c.area, ids: [c.id] });
   }
   for (const c of units) {
-    if (c.x0 < lastX - 0.3 * sp) continue;
+    // (a unit that starts before the clef's end but lies mostly after it is the first accidental:
+    // wide sharps reach under the bass clef's dots)
+    if (c.x0 < lastX - 0.3 * sp && (c.ids.some(id => st.headerLabels.includes(id)) || (c.x0 + c.x1) / 2 < lastX + 0.2 * sp)) continue;
     if (c.x0 > lastX + 1.6 * sp) break;
     const hsp = c.h / sp, wsp = c.w / sp;
     // small blobs right after the clef (big bass-clef dots, clef debris) do not end the key signature
@@ -1377,7 +1465,8 @@ export function assemble(ctx, staves, cls, image, options = {}) {
   const staffCount = perSystem.length ? Math.max(...perSystem) : 1;
   const clefVote = (si) => {
     const votes = {};
-    for (const sys of systemList) { const st = sys.staves[si]; if (st && !st.clefMissing) votes[st.clef] = (votes[st.clef] || 0) + 1; }
+    // (confidence-weighted: a size-rule guess counts less than a classified clef)
+    for (const sys of systemList) { const st = sys.staves[si]; if (st && !st.clefMissing) votes[st.clef] = (votes[st.clef] || 0) + (st.clefConf ?? 0.6); }
     const best = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
     return best ? best[0] : (si === 1 ? 'bass' : 'treble');
   };
@@ -1387,7 +1476,17 @@ export function assemble(ctx, staves, cls, image, options = {}) {
   else instruments = clefs.map(c => (c === 'bass' ? 'cello' : c === 'alto' ? 'viola' : 'keyboard'));
   // key / time signature by majority over all staves
   const keyVotes = {}, tsVotes = {};
-  for (const st of staves) { keyVotes[st.keyFifths] = (keyVotes[st.keyFifths] || 0) + 1; if (st.timeSig) { const k = `${st.timeSig.num}/${st.timeSig.den}/${st.timeSig.display}`; tsVotes[k] = (tsVotes[k] || 0) + 1; } }
+  // (time signature: the first system's counts more, a meter no real piece uses (a measure number or
+  // stray marks at a later staff start read as "1/4") counts little)
+  const firstSys = Math.min(...staves.map(st => st.systemIndex ?? 0));
+  for (const st of staves) {
+    keyVotes[st.keyFifths] = (keyVotes[st.keyFifths] || 0) + 1;
+    if (st.timeSig) {
+      const k = `${st.timeSig.num}/${st.timeSig.den}/${st.timeSig.display}`;
+      const wt = ((st.systemIndex ?? 0) === firstSys ? 1.5 : 1) * (PLAUSIBLE_METERS.has(`${st.timeSig.num}/${st.timeSig.den}`) ? 1 : 0.25);
+      tsVotes[k] = (tsVotes[k] || 0) + wt;
+    }
+  }
   let keyFifths = options.keyFifths != null ? options.keyFifths : parseInt((Object.entries(keyVotes).sort((a, b) => b[1] - a[1])[0] || ['0'])[0], 10);
   // a misread key signature is mostly "nothing found" (0); the same non-zero key on
   // several staves is strong evidence (photo pipeline: broken clefs, faint headers)
@@ -1465,8 +1564,8 @@ export function assemble(ctx, staves, cls, image, options = {}) {
       if (globalIdx >= m.staves.length) return;
       const voice = m.staves[globalIdx].voices[0];
       // a clef that was not found is the clef of the same staff in the other systems (not treble);
-      // photo pipeline: an uncertain clef that disagrees with the page majority follows it too
-      const clef = st.clefMissing || (!options.legacyPreprocess && st.clef !== clefs[globalIdx] && (st.clefConf ?? 1) < 0.8) ? clefs[globalIdx] : st.clef;
+      // an uncertain clef that disagrees with the page majority follows it too
+      const clef = st.clefMissing || (st.clef !== clefs[globalIdx] && (st.clefConf ?? 1) < 0.8) ? clefs[globalIdx] : st.clef;
       if (clef !== clefs[globalIdx] && rm.sys.staves[si] && rawMeasures.findIndex(r => r.sys === rm.sys) === mi) m.staves[globalIdx].clef = clef;
       const accState = {};
       const carry = tieCarry[globalIdx] || (tieCarry[globalIdx] = {});
@@ -1783,7 +1882,14 @@ export async function recognize(image, options = {}, onProgress = () => {}) {
   if (mode === 'photo') return recognizeOnce(image, { ...options, legacyPreprocess: false }, onProgress);
   const scaled = (a, b) => (p) => onProgress({ ...p, percent: a + (b - a) * (p.percent || 0) / 100 });
   const first = await recognizeOnce(image, { ...options, legacyPreprocess: true }, scaled(0, 40));
-  if (first.staves.length && first.confidence >= AUTO_KEEP_CONFIDENCE) { onProgress({ stage: 'assemble', percent: 100, message: '완료' }); return { ...first, pipeline: 'legacy' }; }
+  // a confident result is kept unless it is implausible: a meter guessed from the measures (no time
+  // signature read) that no real piece uses, or a single short staff — the original front end found
+  // one staff of a low-resolution photo, whose few "measures" then fit a made-up meter (1/4, 14/8)
+  const ts0 = first.score && first.score.measures[0] && first.score.measures[0].timeSig;
+  const guessed = first.warnings.some(w => w.startsWith('박자표를 인식하지 못해'));
+  const oddMeter = guessed && ts0 && !PLAUSIBLE_METERS.has(`${ts0.num}/${ts0.den}`);
+  const tiny = first.staves.length === 1 && first.score.measures.length <= 3;
+  if (first.staves.length && first.confidence >= AUTO_KEEP_CONFIDENCE && !oddMeter && !tiny) { onProgress({ stage: 'assemble', percent: 100, message: '완료' }); return { ...first, pipeline: 'legacy' }; }
   const second = await recognizeOnce(image, { ...options, legacyPreprocess: false }, scaled(40, 100));
   // measure-fit confidence alone favours a result that lost most notes (short
   // measures padded with rests still "fit"): weigh it by the share of notes found
@@ -1800,6 +1906,7 @@ export async function recognize(image, options = {}, onProgress = () => {}) {
 }
 const AUTO_KEEP_CONFIDENCE = 0.9;
 const AUTO_PHOTO_MARGIN = 0.05;
+const PLAUSIBLE_METERS = new Set(['2/4', '3/4', '4/4', '5/4', '6/4', '2/2', '3/2', '4/2', '3/8', '6/8', '9/8', '12/8', '5/8', '7/8', '2/8', '4/8']);
 
 async function recognizeOnce(image, options = {}, onProgress = () => {}) {
   const progress = (stage, percent, message) => { try { onProgress({ stage, percent, message }); } catch (_) { /* ignore */ } };

@@ -19,7 +19,7 @@ export function buildTrace(ctx, staves, prims, cls) {
       lines.push(pts);
     }
     return { lines, systemIndex: st.systemIndex, clef: st.clef, clefMissing: !!st.clefMissing, keyFifths: st.keyFifths, keyConf: st.keyConf || 0,
-      timeSig: st.timeSig || null, headerEnd: P(st.headerEnd ?? st.x0, st.lines[2][xi(st.headerEnd ?? st.x0)]) };
+      timeSig: st.timeSig || null, clefConf: st.clefConf ?? null, clefCands: st.clefCands || null, headerEnd: P(st.headerEnd ?? st.x0, st.lines[2][xi(st.headerEnd ?? st.x0)]) };
   });
   const barlines = [];
   for (const sys of cls.systems || []) {

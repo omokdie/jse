@@ -21,7 +21,9 @@ export function frontEnd(image, options = {}, progress = () => {}) {
   progress('staves', 30, '페이지 왜곡 보정 중…');
   const r = rectify(ctx, staves, options);
   if (!r) return { ctx, staves };
-  const opts2 = { ...options, staffAngles: [0, -1.5, 1.5] };
+  // (rectified strips: lines are straight and horizontal — the permissive line threshold of the first
+  // detection is not needed there and only adds false groups)
+  const opts2 = { ...options, staffAngles: [0, -1.5, 1.5], permissiveLines: false };
   let s2 = assignStripSystems(r, detectStavesV2(r, opts2));
   if (s2.length && rebinarize(r, s2)) {
     const again = assignStripSystems(r, detectStavesV2(r, opts2));

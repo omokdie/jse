@@ -12,14 +12,14 @@ import { clamp, thinMask } from './imgutil.js';
 
 const rnd = Math.round;
 
-function linesInBand(thin, w, h, x0, x1, t, tg) {
+function linesInBand(thin, w, h, x0, x1, t, tg, frac = 0.36) {
   const proj = new Float32Array(h);
   const xc = (x0 + x1) / 2;
   for (let x = x0; x < x1; x++) {
     const dy = rnd((x - xc) * tg);
     for (let y = Math.max(0, -dy), ye = Math.min(h, h - dy); y < ye; y++) proj[y] += thin[(y + dy) * w + x];
   }
-  const bw = x1 - x0, thr = 0.36 * bw;
+  const bw = x1 - x0, thr = frac * bw;
   const lines = [];
   let y = 0;
   while (y < h) {
@@ -138,7 +138,12 @@ export function detectStavesV2(ctx, options = {}) {
     const clusters = [];
     for (let b = 0; b < nb; b++) {
       const x0 = rnd(b * bw), x1 = rnd((b + 1) * bw), xc = (x0 + x1) / 2;
-      for (const c of groupStaves(linesInBand(thin, w, h, x0, x1, t, tg), sp)) {
+      // dense beams / chords cover most of a band's staff lines (the thin mask drops lines inside
+      // thick ink): a second, more permissive projection threshold finds those bands' 5-line groups
+      const groups = groupStaves(linesInBand(thin, w, h, x0, x1, t, tg), sp);
+      for (const g of groups) g.strict = true;
+      if (options.permissiveLines !== false) for (const c of groupStaves(linesInBand(thin, w, h, x0, x1, t, tg, 0.22), sp)) if (!groups.some(g => Math.abs(g.ys[0] - c.ys[0]) < 0.5 * sp)) groups.push(c);
+      for (const c of groups) {
         const top = c.ys[0], bot = c.ys[4];
         let best = null, bd = 0.6 * sp;
         for (const cl of clusters) {
@@ -148,17 +153,23 @@ export function detectStavesV2(ctx, options = {}) {
           const d = Math.max(Math.abs(last.top + dx * tg - top), Math.abs(last.bot + dx * tg - bot));
           if (d < bd) { bd = d; best = cl; }
         }
-        const mem = { b, xc, top, bot, ys: c.ys };
+        const mem = { b, xc, top, bot, ys: c.ys, strict: !!c.strict };
         if (best) best.members.push(mem); else clusters.push({ members: [mem], angle: a, tg });
       }
     }
     for (const cl of clusters) cands.push(cl);
   }
   const minMembers = Math.max(2, Math.ceil(nb * 0.15));
-  cands.sort((p, q) => q.members.length - p.members.length);
+  // clearly visible bands count double: a group shifted by one line (a permissive band taking a beam
+  // or text edge for a staff line) must not outvote the true staff in the duplicate check below
+  for (const cl of cands) cl.score = cl.members.reduce((a, m) => a + (m.strict ? 2 : 1), 0);
+  cands.sort((p, q) => q.score - p.score);
   const accepted = [];
   for (const cl of cands) {
-    if (cl.members.length < minMembers) break;
+    if (cl.members.length < minMembers) continue;
+    // a staff needs some bands with clearly visible lines (permissive bands alone: text, textures)
+    const nStrict = cl.members.filter(m => m.strict).length;
+    if (nStrict < Math.min(2, Math.ceil(0.1 * cl.members.length))) continue;
     const mid = cl.members[cl.members.length >> 1];
     const dup = accepted.some(o => {
       const om = o.members[o.members.length >> 1];
@@ -169,7 +180,9 @@ export function detectStavesV2(ctx, options = {}) {
   }
   const staves = [];
   for (const cl of accepted) {
-    const mid = cl.members[cl.members.length >> 1];
+    // tracking starts from a clearly visible band near the middle of the cluster
+    const strictM = cl.members.filter(m => m.strict);
+    const mid = strictM.length ? strictM[strictM.length >> 1] : cl.members[cl.members.length >> 1];
     // slope from the cluster members (least squares of top vs xc), fallback: sweep angle
     let slope = cl.tg;
     if (cl.members.length >= 3) {

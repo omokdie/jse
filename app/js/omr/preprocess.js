@@ -88,9 +88,55 @@ function rankBinarisations(img, w, h, lv, qs) {
   return [...agree, ...rest];
 }
 
+/** Large solid dark regions around the page (a dark table, the scanner lid, black photocopy or
+ * binarisation borders) become paper: they wreck the grey levels, the illumination estimate and the
+ * staff-line projections.  A region counts if a window of 1/30 of the image is (almost) entirely
+ * dark there — no music symbol is that large and solid.  Works at 1/4 resolution, in place. */
+export function fillDarkBackground(gray, W, H) {
+  const f = 4, sm = boxDown(gray, W, H, f), w = sm.w, h = sm.h, d = sm.data;
+  if (w < 16 || h < 16) return gray;
+  const hist = histogram(d, 1);
+  // (p90: a border can cover more than half the frame; 0.25: deep cast shadows on the page stay)
+  const thr = 0.25 * percentile(hist, 0.9);
+  const k = Math.max(5, Math.round(Math.max(w, h) / 30)), r = k >> 1;
+  // integral image of the dark mask
+  const I = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += d[y * w + x] < thr ? 1 : 0; I[(y + 1) * (w + 1) + x + 1] = I[y * (w + 1) + x + 1] + row; } }
+  const box = (A, x0, y0, x1, y1) => A[y1 * (w + 1) + x1] - A[y0 * (w + 1) + x1] - A[y1 * (w + 1) + x0] + A[y0 * (w + 1) + x0];
+  const core = new Uint8Array(w * h);
+  let nCore = 0;
+  for (let y = r; y < h - r; y++) for (let x = r; x < w - r; x++) if (box(I, x - r, y - r, x + r + 1, y + r + 1) >= 0.97 * (2 * r + 1) * (2 * r + 1)) { core[y * w + x] = 1; nCore++; }
+  if (nCore < 0.01 * w * h) return gray;
+  // dilate the core by the window radius (+ a little: the page edge's shadow band)
+  const J = new Float64Array((w + 1) * (h + 1));
+  for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += core[y * w + x]; J[(y + 1) * (w + 1) + x + 1] = J[y * (w + 1) + x + 1] + row; } }
+  const R = r + 2;
+  const bg = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (box(J, Math.max(0, x - R), Math.max(0, y - R), Math.min(w, x + R + 1), Math.min(h, y + R + 1)) > 0) bg[y * w + x] = 1;
+  }
+  // only regions connected to the frame edge (the surroundings of the page, not dark ink on it)
+  const keep = new Uint8Array(w * h), stack = [];
+  for (let x = 0; x < w; x++) for (const y of [0, h - 1]) if (bg[y * w + x] && !keep[y * w + x]) { keep[y * w + x] = 1; stack.push(y * w + x); }
+  for (let y = 0; y < h; y++) for (const x of [0, w - 1]) if (bg[y * w + x] && !keep[y * w + x]) { keep[y * w + x] = 1; stack.push(y * w + x); }
+  let nKeep = stack.length;
+  while (stack.length) {
+    const i = stack.pop(), x = i % w, y = (i / w) | 0;
+    for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1]) if (j >= 0 && bg[j] && !keep[j]) { keep[j] = 1; nKeep++; stack.push(j); }
+  }
+  if (nKeep < 0.05 * w * h) return gray;
+  bg.set(keep);
+  const paper = percentile(histogram(d.filter((v, i) => !bg[i]), 1), 0.6);
+  for (let y = 0; y < H; y++) {
+    const ys = Math.min(h - 1, (y / f) | 0);
+    for (let x = 0; x < W; x++) if (bg[ys * w + Math.min(w - 1, (x / f) | 0)]) gray[y * W + x] = paper;
+  }
+  return gray;
+}
+
 export function preprocessV2(image, options = {}) {
   const W = image.width, H = image.height;
-  const grey0 = toGray(image);
+  const grey0 = options.keepBackground ? toGray(image) : fillDarkBackground(toGray(image), W, H);
   // --- first look: rough normalisation and staff space at coarse resolution -----
   let norm = normalizeIllumination(grey0, W, H, Math.max(W, H) / 70);
   const f1 = W * H > 2.5e6 ? (W * H > 10e6 ? 3 : 2) : 1;

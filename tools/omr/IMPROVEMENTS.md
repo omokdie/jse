@@ -1,5 +1,153 @@
 # OMR photo-accuracy work
 
+## Round 4 (after v1.0.5): clef selection, staff detection, keys / time / accidentals, new holdout
+
+### Results (`node tools/omr/stage_eval.mjs --dir tools/omr/corpus/<split>`; pitch / duration / exact measure count)
+
+| split | v1.0.5 | after (shipped code) | notes |
+|---|---|---|---|
+| **holdout4_photo** (80 photos, frozen; unseen music + 3 unseen fonts) | 68.9 / 79.9 / 70.0 % | **75.1 / 81.6 / 73.8 %** | 1st run (frozen code): 76.5 / 81.6 / 73.8 — see below |
+| — scan (16) / flat (28) | 71.0/94.3/81.3 · 85.9/89.2/75.0 | 84.6/94.9/75.0 · 84.8/89.2/75.0 | flat: page key 82→75 % |
+| — curl (20) / hard (16) | 81.7/89.2/80.0 · 26.3/42.8/37.5 | 88.0/92.7/90.0 · 37.9/46.1/50.0 | |
+| — per stage | staff R 97.9, clef 83.7, page key 78.8, time 57.7, barline R/P 89.5/99.5, heads R 89.9, rests R 91.2, acc R/P 58.6/97.4 | 99.2, 89.2, 80.0, 57.7, 90.5/99.8, 92.3, 94.4, 62.3/94.5 | |
+| holdout4_pages (40 clean pages of the same music) | 87.0 / 95.7 / 90.0 | **92.1 / 95.8 / 87.5** | clef 94→100; one page lost its exact count |
+| holdout3_photo (82, dev this round) | 63.5 / 75.6 / 68.3 | **74.0 / 79.7 / 74.4** | scan 88.8/94.6, flat 79.3/83.3, curl 78.5/87.6, hard 38.1/43.0 |
+| holdout3_pages (41, dev) | 84.1 / 92.3 / 85.4 | **93.0 / 95.5 / 87.8** | clef 93→100, page key 95→100 |
+| fresh_photo (56, dev) | 81.1 / 85.1 / 66.1 | **83.7 / 85.7 / 67.9** | scan 94.1/95.3, flat 84.7/87.9, curl 84.6/87.1, hard 68.0/67.8 |
+| eval_photo (60, dev, synthetic) | 83.2 / 85.9 / 53.3 | **84.1 / 84.3 / 56.7** | curl 83.0/85.4 (85.0/87.5), hard 61.6/61.7 (57.9/64.6) |
+| eval_clean (60) | 96.5 / 97.8 / 83.3 | **97.5 / 97.8 / 83.3** | no regression |
+| base (40) | 97.1 / 97.1 / 92.5 | **97.6 / 97.1 / 92.5** | no regression |
+| aug (80) | 84.6 / 91.7 / 75.0 | **87.4 / 91.6 / 75.0** | |
+
+holdout4 photos by font (pitch / duration, v1.0.5 → after): **unseen fonts** (Finale Maestro, Gootville,
+MScore) 80.4/83.4 → 84.3/87.1 (Finale Maestro 87.9/89.3 → 83.8/87.0, Gootville 61.2/68.1 → 78.7/82.2,
+MScore 89.9/92.3 → 89.8/92.0); seen fonts 63.2/78.0 → 70.6/78.6 (Leland 94.1/88.9, Leipzig 77.1/83.3,
+FreeSerif 69.3/80.9, Bravura 68.4/63.9, Petaluma 45.1/74.9); piano 58.2 → 68.3, single staff 79.0 → 81.5.
+
+**How holdout4 was used.** Built and frozen first (40 pages / 80 photos, sha1 of the photo folder
+listing `a273012d…`, pages `b24b9927…`); v1.0.5 measured from `git archive HEAD app tools` → /tmp/v105.
+The 1st look was with the code frozen after all dev work (76.5 / 81.6 / 73.8, /tmp/omrw/r4_final_*.json).
+The final dev check right after showed an alto-clef regression on eval_photo (thin synthetic alto clefs
+that v1.0.5 got right only through the size rule; change 1 had made them "missing" → treble); it was
+fixed on eval_photo alone (weak size-rule vote, eval_photo 81.9 → 84.1, aug 84.3 → 87.4, holdout3
+photos −0.7, fresh / clean sets unchanged) and holdout4 was measured a 2nd time with that shipped code
+(75.1 / 81.6 / 73.8, r4_finalB_*.json: three piano photos lost their bass staff to a weak "alto" vote,
+see next steps).  No change was made after looking at holdout4.
+
+The 90 % target is **not reached** (holdout4 photos 75 % pitch, 82 % duration; clean pages 92 / 96 %).
+Timing: Node, 2 evaluations in parallel on this 2-core machine, lyrics off: 3.2 s per holdout4 photo
+(v1.0.5 2.7 s), 2.7 s per holdout3 / fresh / eval photo, 1.9 s per clean page; Chromium, app worker in
+the UI scan flow incl. the lyric stage (fresh browser each run): 5.9 s for a curled photo (v1.0.5 on the
+same machine and photo: 5.9 s), 4.9 s for the binarised Vivaldi scan (v1.0.5 found no staff there).
+Shipped weights unchanged (294 KB); 27/27 tests pass.
+
+### What blocks 90 % now (holdout4 photos, 1st run: 1,351 of 5,752 notes with a wrong pitch)
+
+1. **Clefs** (49 % of the lost notes; clef 61–66 % on hard photos): clefs broken or blurred into other
+   shapes; one wrong staff clef loses the whole staff.  In the shipped code a weak size-rule vote can
+   also outvote the grand-staff default (lower staff = bass) when no system has a classified clef —
+   found on holdout4, so it must be checked on dev next round: weak votes should not beat the default.
+2. **Key signatures with 4–6 accidentals** (33 %): Petaluma 4–5 sharps read as 0 on every staff (the
+   generator spaces key accidentals 1 sp apart, so Petaluma's 1.65 sp sharps overlap into one blob),
+   Finale Maestro / MScore 4–5 flats under-counted on flat photos and scans; page key on flat photos
+   fell 82 → 75 % — possibly change 7 (a ≤ 1.75 sp unit that is clearly one accidental is not cut:
+   two tightly spaced flats can be that narrow).  Needs a dev check (not tuned on holdout4).
+3. Hard photos in general (38 % pitch): heads recall 75 %, accidentals 16 %, barlines 79 %; the
+   faintest ones still lose staves (thin-line mask at 6–8 px staff space).
+4. Accidentals inside measures (recall 62 %), dots and 16th/32nd (duration 82 %), barline recall
+   (exact measure counts 74 %).  Retraining the glyph / rhythm models with more fonts and hard photos
+   did not help on dev (below) — the remaining errors are mostly front-end / layout logic.
+
+### Files (round 4)
+
+`app/js/omr/omr.js` (clef selection + weak fallback, clef / time votes, key-signature units,
+accidental windows, auto-mode guard), `staves.js` (permissive bands), `preprocess.js`
+(`fillDarkBackground`), `frontend.js` (no permissive bands on rectified strips), `trace.js` (clef
+diagnostics); tools: `gen_finale_pages.mjs --musicxml`, `gen_photo.py` (splits holdout4, ftrain4),
+`tools/omr/holdout4.json`; corpora `corpus/holdout4_pages`, `corpus/holdout4_photo` (git-ignored).
+
+```sh
+git clone --filter=blob:none --sparse https://github.com/MarkGotham/When-in-Rome /tmp/r4fonts/wir   # + sparse patterns /Corpus/**/*.mxl,*.musicxml
+git clone --depth 1 --filter=blob:none --sparse https://github.com/musescore/MuseScore /tmp/r4fonts/ms && git -C /tmp/r4fonts/ms sparse-checkout set fonts
+python3 tools/omr/smufl_glyphs.py --font /tmp/r4fonts/ms/fonts/finalemaestro/FinaleMaestro.otf --out /tmp/omr_fonts/finalemaestro.json   # + gootville, mscore, musejazz
+node tools/omr/gen_finale_pages.mjs --musicxml --src /tmp/r4music/wir --keys /tmp/omrw/r4/train4.json --count 150 --per-folder 3 --fonts sebastian,ekmelos,musejazz,bravura,leland,petaluma,leipzig,freeserif --out /tmp/omrw/r4/tr_pages --seed 61
+python3 tools/omr/gen_photo.py --pages /tmp/omrw/r4/tr_pages --split ftrain4 --count 150 --fast --kinds hard,flat,curl,hard,scan,flat,hard,curl --out /tmp/omrw/r4/trp
+node tools/omr/extract_glyphs.mjs --dir /tmp/omrw/r4/trp/ftrain4_photo,/tmp/omrw/r4/gmp/ftrain4_photo --out /tmp/omrw/r4/g4 --heads-out /tmp/omrw/r4/h4s --rhythm-out /tmp/omrw/r4/r4s --bars-out /tmp/omrw/r4/b4s
+OMR_MODELS=/tmp/omrw/r4/mG node tools/omr/stage_eval.mjs --dir tools/omr/corpus/fresh_photo   # A/B of a model directory
+```
+
+### holdout4 (built and frozen before any change)
+
+* The Finale corpus is exhausted: of the 469 cache files never used by any generated set (incl.
+  holdout3 files + related), **0** pass the page generator's excerpt filter (worksheets, templates,
+  percussion).  holdout4 music therefore comes from an external corpus never used before:
+  **When-in-Rome** (`git clone --filter=blob:none --sparse https://github.com/MarkGotham/When-in-Rome`,
+  incl. the OpenScore Lieder corpus — CC0 / public domain): 761 MusicXML scores (Lieder voice +
+  piano, Mozart piano sonatas, Beethoven quartets, Bach, textbook examples) extracted to
+  `/tmp/r4music/wir` (one file per score, path components joined by `__`).
+  `gen_finale_pages.mjs --musicxml` reads them with the app's `importMusicXML`.
+* Split by collection (first 3 path components, FNV-1a % 3 == 0 → holdout4): `tools/omr/holdout4.json`
+  (327 files; `related` = 5 files with the same music as Finale pieces: Mozart K545, WTC I/1,
+  Schubert "Ave Maria" — never used).  Training this round uses only the other collections.
+* **3 fonts never used before** (MuseScore repo `fonts/`, SIL OFL, sparse clone): Finale Maestro,
+  Gootville, MScore (Emmentaler) — holdout only; + Bravura, Leland, Petaluma, Leipzig, FreeSerif.
+* `corpus/holdout4_pages`: 40 clean pages (25 single staff, 15 piano; keys −6…+6, 2/4…3/2, lyrics
+  under the voice parts), `corpus/holdout4_photo`: 80 photos (`gen_photo.py --split holdout4`, seed
+  8401, fixed profile mix incl. hard / low-res).
+
+```sh
+node tools/omr/gen_finale_pages.mjs --musicxml --src /tmp/r4music/wir --keys tools/omr/holdout4.json --count 40 --per-folder 2 --fonts finalemaestro,gootville,mscore,bravura,leland,petaluma,leipzig,freeserif --out tools/omr/corpus/holdout4_pages --seed 53
+python3 tools/omr/gen_photo.py --pages tools/omr/corpus/holdout4_pages --split holdout4 --count 40 --per-page 2 --out /tmp/omrw/r4/h4   # → corpus/holdout4_photo
+```
+
+### Changes (dev: holdout3, fresh, eval, base)
+
+1. **Clef selection** (`detectHeader`): the tall header components (overlapping their own staff by
+   ≥ 1.5 sp — in piano music the treble clef of the staff above reached into the bass staff's header
+   zone) are scored by the glyph classifier; the first accepted one is the clef, leading shapes it
+   firmly rejects (rehearsal boxes, text) are skipped; a clef broken into pieces by staff-line removal
+   is classified as the union of its pieces; in photos a clef blurred into the key signature / a slur
+   is classified from its left part.  The size rule is only a fallback: on a shape the classifier
+   does not read as accidentals it sets the clef type as a weak vote (confidence 0.35) without moving
+   the header end (the curved half of a broken alto clef reads as a digit; a chord at the staff start
+   must keep its notes).  The per-staff clef vote is
+   confidence-weighted, and an uncertain (< 0.8) minority clef follows the page majority in both
+   pipelines (was: photo pipeline only).  holdout3_pages: clef 93 → 99 %, pitch 84.1 → 88.4 %.
+2. **Staff detection with dense beams** (`staves.js`): 16th/32nd beam groups inside the staff hide
+   most of a band's line pixels in the thin-line mask (Vivaldi page: 3 of 7 staves on the clean page,
+   0 on its photos).  Each band is also projected with a permissive threshold (0.22 instead of 0.36
+   of the band width); a cluster must still contain clearly visible (0.36) bands, and tracking starts
+   from one of them (permissive bands alone gave false staves on text / textures).
+3. **Dark background** (`preprocess.js fillDarkBackground`, photo front end): solid dark regions
+   around the page (binarised scans with black borders, dark tables) — a window of 1/30 of the image
+   almost entirely dark — are painted with the paper level before any other step (they broke the
+   grey levels and the projections: a binarised scan of the Vivaldi page found no staff).
+4. **Auto mode guard** (`recognize`): a "confident" original-pipeline result is no longer returned
+   at once when it is implausible — a meter guessed from the measures that no real piece uses (1/4,
+   14/8 …) or a single staff with ≤ 3 measures.  On low-resolution photos the original front end
+   found 1 of 4 staves, its few measures "fitted" a made-up meter (confidence 1.0) and the photo
+   pipeline (4/4 staves) never ran.
+5. Accidental windows (classify the ink box left of a head without accidental) also in the original
+   pipeline (clean pages).
+6. **Time-signature vote**: the first system's reading counts 1.5×, a meter no real piece uses (1/4
+   read from a measure number / stray marks at later staff starts) 0.25× (a hard photo: 22 measures
+   became 38).
+7. **Key signature**: a unit ≤ 1.75 sp wide that is clearly one accidental (p ≥ 0.9) is no longer cut
+   into "k touching accidentals" (the halves of Petaluma's 1.65 sp sharp classify as sharps → 2
+   sharps); a single accidental may be up to 2.3 sp wide; the first accidental may start under the
+   bass clef's dots (wide sharps were skipped → key 0 on every bass staff).
+8. **Accidentals in measures**: the window left of a head reaches 2.6 sp up / 2.1 sp down (a flat's
+   top is ~2.2 sp above its head: tall flats always touched the old ±1.9 sp window and were
+   rejected); chord accidentals may sit in a second column (gap ≤ 2.6 sp instead of 1.4 sp for chord
+   heads; a closer accidental is never overwritten).
+
+Tried, not kept: rhythm (beam / flag) model retrained with the new stems (48 k, int8 val 95.8 %):
+holdout3 photos 74.7 → 74.6 pitch, exact measures 74.4 → 73.2.  Note-head model retrain with the new
+samples (954 k) ran out of memory — not attempted further.  Glyph classifier retrained on 178 k samples (round-2/3 sets + 43.6 k new ones from
+150 When-in-Rome train pages + 60 glyph-mode pages in Sebastian, Ekmelos, MuseJazz + the 5 old fonts,
+hard-heavy photo mix; int8 val 98.75 %): page key +1.3–3.6 points but pitch −0.4 (fresh) / −0.7
+(holdout3), exact measures −1.8 / −2.4 → the shipped `glyphs.js` stays.
+
 ## Round 3 (after v1.0.4): learned rhythm + barline verifier, measure decoder, a stem-loss bug
 
 ### Results (`node tools/omr/stage_eval.mjs --dir tools/omr/corpus/<split>`; pitch / duration / exact measure count)

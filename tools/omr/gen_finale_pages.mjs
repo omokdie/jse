@@ -24,6 +24,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { enigmaToScore } from '../../app/js/io/musx.js';
+import { importMusicXML } from '../../app/js/io/musicxml.js';
 import { engrave } from '../../app/js/engrave/render.js';
 import { GLYPHS } from '../../app/js/engrave/glyphs.js';
 import { SP } from '../../app/js/engrave/layout.js';
@@ -46,6 +47,10 @@ const PER_FOLDER = parseInt(opt('--per-folder', '3'), 10);   // pages per folder
 // measures (many more header glyphs in every font); the music then no longer fits the meter, so these
 // pages must not be used for end-to-end evaluation (gt.glyphMode = true).
 const GLYPH_MODE = args.includes('--glyph-mode');
+// --musicxml: --src is a folder of .musicxml files from an external corpus (round 4: When-in-Rome /
+// OpenScore Lieder, never part of the Finale corpus), imported with the app's MusicXML reader;
+// file names use '__' between path components like the Finale cache
+const MUSICXML = args.includes('--musicxml');
 // --keys FILE: only collections / files listed in FILE ({keys: [splitKey...], files: [name...]}, e.g. tools/omr/holdout3.json);
 // --exclude FILE: never collections listed in FILE (training must exclude the frozen holdouts)
 const keyList = (f, withRelated) => { if (!f) return null; const j = JSON.parse(fs.readFileSync(f, 'utf8')); return new Set([...(j.keys || []), ...(j.files || []), ...(withRelated ? j.related || [] : [])]); };
@@ -76,7 +81,7 @@ function useFont(name) {
 
 // ---------------------------------------------------------------- selection
 const OK_CLEFS = new Set(['treble', 'bass', 'alto']);
-const comps = (f) => f.replace(/\.musx\.xml\.gz$|\.xml\.gz$/, '').split('__');
+const comps = (f) => f.replace(/\.musx\.xml\.gz$|\.xml\.gz$|\.musicxml$/, '').split('__');
 const pieceKey = (f) => comps(f).slice(0, -1).join('__') || f;                                   // folder (parts of one piece)
 const splitKey = (f) => { const c = comps(f); return c.slice(0, Math.min(6, c.length - 1)).join('__'); };   // collection / piece
 const splitOf = (f) => (fnv(splitKey(f)) % 5 === 0 ? 'holdout' : 'train');
@@ -310,7 +315,9 @@ function buildGT(score, page, S, n, name, font, tx, pi = 0) {
 }
 
 // ---------------------------------------------------------------- main
-const files = fs.readdirSync(SRC).filter(f => f.endsWith('.gz') && (ONLY_KEYS ? listed(ONLY_KEYS, f) : splitOf(f) === SPLIT) && !(EXCLUDE_KEYS && listed(EXCLUDE_KEYS, f))).sort();
+const files = MUSICXML
+  ? fs.readdirSync(SRC).filter(f => f.endsWith('.musicxml') && (!ONLY_KEYS || ONLY_KEYS.has(f.replace(/\.musicxml$/, ''))) && !(EXCLUDE_KEYS && EXCLUDE_KEYS.has(f.replace(/\.musicxml$/, '')))).sort()
+  : fs.readdirSync(SRC).filter(f => f.endsWith('.gz') && (ONLY_KEYS ? listed(ONLY_KEYS, f) : splitOf(f) === SPLIT) && !(EXCLUDE_KEYS && listed(EXCLUDE_KEYS, f))).sort();
 // deterministic shuffle
 for (let i = files.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [files[i], files[j]] = [files[j], files[i]]; }
 console.log(`${files.length} ${SPLIT} files`);
@@ -323,7 +330,7 @@ for (const f of files) {
   if ((usedPieces.get(key) || 0) >= PER_FOLDER) continue;     // at most PER_FOLDER parts of one piece / folder
   tried++;
   let score;
-  try { score = enigmaToScore(zlib.gunzipSync(fs.readFileSync(path.join(SRC, f))).toString('utf8')); } catch (e) { continue; }
+  try { score = MUSICXML ? importMusicXML(fs.readFileSync(path.join(SRC, f), 'utf8')) : enigmaToScore(zlib.gunzipSync(fs.readFileSync(path.join(SRC, f))).toString('utf8')); } catch (e) { continue; }
   const c = excerpt(score, rand);
   if (!c) continue;
   const font = FONTS[made % FONTS.length];
@@ -343,7 +350,8 @@ for (const f of files) {
   const gt = buildGT(sc, page, S, c.n, name, font, res.margin.left, pi);
   const nNotes = gt.measures.reduce((a, m) => a + m.staves.flat().filter(e => e.kind === 'note').length, 0);
   if (nNotes < 20) { useFont('freeserif'); continue; }
-  gt.piece = f.replace(/\.musx\.xml\.gz$/, '');
+  gt.piece = f.replace(/\.musx\.xml\.gz$|\.musicxml$/, '');
+  if (MUSICXML) gt.source = 'musicxml';
   const svg = connectGrandStaff(page.svg, page.geometry, c.n).replace('<svg ', `<svg width="${gt.width}" height="${gt.height}" `);
   await sharp(Buffer.from(svg), { density: 72 }).flatten({ background: '#ffffff' }).greyscale().png().toFile(path.join(OUT, name + '.png'));
   fs.writeFileSync(path.join(OUT, name + '.json'), JSON.stringify(gt));
