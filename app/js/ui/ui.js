@@ -1095,7 +1095,11 @@ export class UI {
   newScoreDialog() { return this.action('new'); }
   exportDialog(fmt) { return exportDialog(this.app, this, fmt); }
   scan(opts = {}) { return scanDialog(this.app, this, opts); }
-  audio(opts = {}) { return import('./audioflow.js').then(m => m.audioDialog(this.app, this, opts)); }
+  audio(opts = {}) {
+    // the claude.ai preview page does not carry the Basic Pitch model (third-party weights)
+    if (window.JSE_PREVIEW) { this.toast('음원으로 악보 만들기는 설치한 앱(Windows·Android)이나 웹앱 https://omokdie.github.io/jse/ 에서 쓸 수 있어요', '', { timeout: 6000 }); return Promise.resolve(); }
+    return import('./audioflow.js').then(m => m.audioDialog(this.app, this, opts));
+  }
 
   // ---------------------------------------------------------------- files
   async confirmDiscard() {
