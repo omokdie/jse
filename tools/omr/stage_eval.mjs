@@ -96,7 +96,8 @@ function stageMetrics(gt, tr) {
     m.headerN++;
     if (!d.clefMissing && d.clef === g.clef) m.clefOk++;
     if (d.keyFifths === gt.keyFifths) m.keyOk++;
-    if (g.system === 0) { m.timeN++; if (d.timeSig && d.timeSig.num === gt.timeSig.num && d.timeSig.den === gt.timeSig.den) m.timeOk++; }
+    // (later pages of real music show no time signature: gt.timeSigShown === false)
+    if (g.system === 0 && gt.timeSigShown !== false) { m.timeN++; if (d.timeSig && d.timeSig.num === gt.timeSig.num && d.timeSig.den === gt.timeSig.den) m.timeOk++; }
   }
   // ---- barlines ----------------------------------------------------------------
   const seg = (b) => (b.p0 ? [b.p0, b.p1] : [[b.x, b.y0], [b.x, b.y1]]);
@@ -147,7 +148,7 @@ function fmtSummary(s) {
     'rest R': pct(s.restTp, s.restGt), 'rest P': pct(s.restTp, s.restDet), 'rest type': pct(s.restTypeOk, s.restTp),
     'acc R': pct(s.accTp, s.accGt), 'acc P': pct(s.accTp, s.accDet), 'acc type': pct(s.accTypeOk, s.accTp),
     'meas ok': pct(s.measureExact, s.n), 'pitch': pct(s.pitchOk, s.gtNotes), 'dur': pct(s.durOk, s.gtEvents), 'SER': pct(s.subs + s.ins + s.dels, s.gtEvents),
-    't/img': (s.time / s.n / 1000).toFixed(2) + 's',
+    't/img': (s.time / s.n / 1000).toFixed(2) + 's', 'photo pipe': pct(s.photoPipe || 0, s.n),
   };
 }
 
@@ -167,7 +168,7 @@ async function main() {
     const time = Date.now() - t0;
     const sm = res.trace ? stageMetrics(gt, res.trace) : { m: {} };
     const seq = sequenceMetrics(gt, res);
-    const row = { ...sm.m, ...seq, time };
+    const row = { ...sm.m, ...seq, time, photoPipe: res.pipeline === 'photo' ? 1 : 0 };
     const kind = (gt.photo && gt.photo.kind) || c.group;
     (groups[c.group] ||= []).push(row);
     if (gt.photo) (groups[`${c.group}:${kind}`] ||= []).push(row);

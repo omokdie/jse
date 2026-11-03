@@ -51,7 +51,7 @@ const TEMPLATE_TO_CLASS = { d0: 'digit0', d1: 'digit1', d2: 'digit2', d3: 'digit
 /** Returns hook(comp, names) → { name, score, top } for omr.js bestTemplate():
  * name ∈ names (template names), score = class probability; `top` is the
  * overall most likely class. Results are cached per component. */
-export function makeGlyphHook(ctx, staves, model, predictFn) {
+export function makeGlyphHook(ctx, staves, model, predictFn, nolines = null) {
   const cache = new Map();
   const feat = new Float32Array(N_GFEAT);
   const idx = new Map(GLYPH_CLASSES.map((c, i) => [c, i]));
@@ -62,14 +62,23 @@ export function makeGlyphHook(ctx, staves, model, predictFn) {
     for (const st of staves) { const t = st.lines[0][x], b = st.lines[4][x]; const d = cy < t ? t - cy : cy > b ? cy - b : 0; if (d < bd) { bd = d; best = st; } }
     return best;
   };
-  return (comp, names) => {
+  const probsOf = (comp) => {
     const key = `${comp.id}:${comp.x0},${comp.y0},${comp.x1},${comp.y1}`;   // split parts share the id
     let probs = cache.get(key);
     if (!probs) {
-      glyphFeatures(ctx, comp, staffFor(comp), feat, comp.area);
+      let area = comp.area;
+      if (area == null && nolines) {      // a window (not a component): ink inside the box
+        area = 0;
+        for (let y = Math.max(0, comp.y0); y <= Math.min(ctx.h - 1, comp.y1); y++) for (let x = Math.max(0, comp.x0); x <= Math.min(ctx.w - 1, comp.x1); x++) area += nolines[y * ctx.w + x];
+      }
+      glyphFeatures(ctx, comp, staffFor(comp), feat, area);
       probs = Float32Array.from(predictFn(model, feat));
       cache.set(key, probs);
     }
+    return probs;
+  };
+  const hook = (comp, names) => {
+    const probs = probsOf(comp);
     let best = null;
     for (const n of names) {
       const c = idx.get(TEMPLATE_TO_CLASS[n] || n);
@@ -77,7 +86,11 @@ export function makeGlyphHook(ctx, staves, model, predictFn) {
       if (!best || probs[c] > best.score) best = { name: n, score: probs[c] };
     }
     let top = 0; for (let i = 1; i < probs.length; i++) if (probs[i] > probs[top]) top = i;
-    if (best) best.top = GLYPH_CLASSES[top];
+    if (best) { best.top = GLYPH_CLASSES[top]; best.topScore = probs[top]; }
     return best;
   };
+  /** class → probability map of a component or window {x0, y0, x1, y1[, id, area]} */
+  hook.probs = (comp) => { const p = probsOf(comp); const o = {}; GLYPH_CLASSES.forEach((c, i) => { o[c] = p[i]; }); return o; };
+  hook.top = (comp) => { const p = probsOf(comp); let t = 0; for (let i = 1; i < p.length; i++) if (p[i] > p[t]) t = i; return { name: GLYPH_CLASSES[t], score: p[t] }; };
+  return hook;
 }

@@ -16,7 +16,16 @@ P = 24
 REC = 1 + 16 + P * P
 
 
-def load(base):
+def load(bases):
+    """One or more extraction outputs (comma-separated), concatenated with distinct image ids."""
+    Xs, ys, imgs, off = [], [], [], 0
+    for b in bases.split(','):
+        X, y, img = load_one(b)
+        Xs.append(X); ys.append(y); imgs.append(img + off); off += int(img.max()) + 1 if len(img) else 0
+    return np.concatenate(Xs), np.concatenate(ys), np.concatenate(imgs)
+
+
+def load_one(base):
     raw = np.fromfile(base + '.bin', np.uint8)
     n = len(raw) // REC
     raw = raw[:n * REC].reshape(n, REC)

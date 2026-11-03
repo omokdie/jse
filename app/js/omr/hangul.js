@@ -21,7 +21,13 @@ const TWO_PI = 2 * Math.PI;
 // ---------------------------------------------------------------------------
 // model (decoded lazily on first use)
 // ---------------------------------------------------------------------------
+let MODEL = HANGUL_MODEL;
 let NET = null;
+const NETS = new WeakMap();      // decoded networks per model object
+
+/** Replace the model (an object shaped like HANGUL_MODEL, e.g. another
+ * hangul-weights.js) — for evaluation tools; null restores the built-in one. */
+export function setModel(model) { MODEL = model || HANGUL_MODEL; NET = NETS.get(MODEL) || null; }
 
 function b64bytes(s) {
   if (typeof atob === 'function') { const bin = atob(s); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
@@ -31,7 +37,7 @@ const f32 = (s) => new Float32Array(b64bytes(s).buffer);
 
 function net() {
   if (NET) return NET;
-  const M = HANGUL_MODEL;
+  const M = MODEL;
   const layers = M.layers.map((L) => {
     const q = new Int8Array(b64bytes(L.w).buffer), scale = f32(L.scale), bias = f32(L.bias);
     const W = new Float32Array(L.in * L.out);              // transposed: W[i * out + o]
@@ -53,13 +59,14 @@ function net() {
     for (let j = 0; j < q.length; j++) NET.prior[j] = -q[j] * M.prior.step;
     NET.priorW = M.prior.weight; NET.priorUnseen = -255 * M.prior.step;
   }
+  NETS.set(M, NET);
   return NET;
 }
 
 /** Weight of the syllable prior in decoding (tuning / evaluation only). */
 export function setPriorWeight(w) { net().priorW = w; }
 
-export function modelInfo() { const M = HANGUL_MODEL; return { version: M.version, types: M.types.slice(), accuracy: M.accuracy }; }
+export function modelInfo() { const M = MODEL; return { version: M.version, types: M.types.slice(), accuracy: M.accuracy, hidden: M.layers.slice(0, -1).map(L => L.out) }; }
 export const isKsSyllable = (ch) => { const n = net(), k = ch.charCodeAt(0) - 0xac00; return k >= 0 && k < 11172 && !!(n.ksBits[k >> 3] & (1 << (k & 7))); };
 
 // ---------------------------------------------------------------------------
@@ -101,7 +108,7 @@ export function sampleEmBox(grey, cx, cy, S, affine = null, k = null, mask = nul
 
 /** Grey crop → ink map in [0,1], quantised to 1/255 (NaN = masked → paper). */
 export function normalizeInk(crop) {
-  const M = HANGUL_MODEL;
+  const M = MODEL;
   let vals = new Float64Array(crop.length), nv = 0;
   for (let i = 0; i < crop.length; i++) if (!Number.isNaN(crop[i])) vals[nv++] = crop[i];
   if (nv < 16) { nv = crop.length; for (let i = 0; i < nv; i++) vals[i] = Number.isNaN(crop[i]) ? 255 : crop[i]; }

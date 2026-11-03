@@ -24,14 +24,30 @@ from korean_lyrics import KoreanLyrics  # noqa: E402
 KIND_INDEX = {'mono': 0, 'piano': 4, 'dense': 7}     # gen_synthetic.make_config kinds (idx % 9)
 
 
-def make_ko_config(rng, idx, kinds=None):
+def font_set(name):
+    """Lyric fonts: 'default' = Noto Serif/Sans KR + WenQuanYi (korean_lyrics.KOREAN_FONTS);
+    'holdout' / 'new' = text faces of that group in tools/omr/hangul/gen_data.py (Google Fonts)."""
+    if name == 'default':
+        return None
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'hangul'))
+    import gen_data
+    out = [(f[0], f[1], f[2]) for f in gen_data.FONTS if f[5] == name and f[6] is None and os.path.exists(f[1])]
+    if not out:
+        raise SystemExit(f'no fonts for --font-set {name} (run tools/omr/hangul/fetch_fonts.sh)')
+    return out
+
+
+def make_ko_config(rng, idx, kinds=None, fonts=None, sp=None):
     kind = gs.pick(rng, [(6, 'mono'), (3, 'piano'), (2, 'dense')])
     if kinds:
         kind = rng.choice(kinds)
     cfg = gs.make_config(rng, KIND_INDEX[kind] + 9 * rng.randrange(1000))
+    if sp:
+        cfg['sp'] = rng.choice(sp)
     sp = cfg['sp']
     verses = 1 if (kind == 'piano' or rng.random() < 0.55) else 2
-    ly = KoreanLyrics(random.Random(rng.randrange(1 << 30)), sp, verses=verses)
+    lrng = random.Random(rng.randrange(1 << 30))
+    ly = KoreanLyrics(lrng, sp, verses=verses, font=lrng.choice(fonts) if fonts else None)
     cfg.update(lyrics=True, lyricHook=ly.hook, maxSystems=rng.choice([2, 3, 3, 4]), title=rng.random() < 0.4)
     if kind == 'piano':
         cfg['lyricStaff'] = 0
@@ -68,6 +84,8 @@ def main():
     ap.add_argument('--only', type=int, default=None)
     ap.add_argument('--start', type=int, default=0, help='first page index (to extend a corpus)')
     ap.add_argument('--kinds', default=None, help='restrict page kinds, e.g. piano or mono,dense')
+    ap.add_argument('--sp', default=None, help='force the staff space (px), e.g. 6,7 for very small lyrics (em ≈ 9–14 px)')
+    ap.add_argument('--font-set', default='default', choices=['default', 'holdout', 'new'], help='lyric fonts (holdout = never trained on)')
     ap.add_argument('--fixture', default=None, help='write the fixed test page (PNG path) and exit')
     args = ap.parse_args()
     if args.fixture:
@@ -79,7 +97,7 @@ def main():
         if args.only is not None and i != args.only:
             continue
         rng = random.Random(args.seed * 7777 + i)
-        cfg, ly = make_ko_config(rng, i, args.kinds.split(',') if args.kinds else None)
+        cfg, ly = make_ko_config(rng, i, args.kinds.split(',') if args.kinds else None, font_set(args.font_set), [int(v) for v in args.sp.split(',')] if args.sp else None)
         png = os.path.join(base_dir, cfg['name'] + '.png')
         gt = gs.render_page(rng, cfg, png, png[:-4] + '.json')
         n_syl = sum(len(e.get('lyrics', [])) for m in gt['measures'] for s in m['staves'] for e in s)

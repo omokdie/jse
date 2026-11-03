@@ -602,6 +602,8 @@ function assignSyllables(syl, notes, sp) {
  * writes the syllables into out.score and appends warnings. Never throws. */
 export function runLyricStage(out, { ctx, staves, events, image, nolines, options = {}, progress = null }) {
   out.lyrics = []; out.lyricLines = [];
+  // evaluation hook: lets a tool re-run recognizeLyrics() on the same music result
+  if (typeof options.onLyricStage === 'function') { try { options.onLyricStage({ ctx, staves, events, image, nolines, score: out.score }); } catch (_) { /* tool error */ } }
   if (options.lyrics === false) return out;
   try {
     if (progress) progress('assemble', 92, '가사 인식 중…');

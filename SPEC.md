@@ -204,7 +204,7 @@ RecognitionResult {
   staves: { bbox:[x,y,w,h], lineYs:number[], spacing:number, partIndex, staffIndex, systemIndex }[],
   measures: { measureId, bbox:[x,y,w,h], confidence }[],
   symbols?: { kind, bbox, confidence, eventId? }[],   // when options.debug
-  deskewAngle: number, binarizedPreview?: ImageData-like (debug),
+  deskewAngle: number, binarizedPreview?: ImageData-like (debug), pipeline: 'legacy'|'photo',
   // Korean lyric stage (omr/lyrics.js + omr/hangul.js, model weights in omr/hangul-weights.js)
   lyrics: { eventId|null, measureId|null, staffIndex, systemIndex, verse, text, confidence: 0..1,
             lowConfidence: boolean /* confidence < 0.8 */, bbox:[x,y,w,h] /* original px */, alternatives: string[] }[],
@@ -263,7 +263,8 @@ export function musxCrypt(bytes) → Uint8Array      // the score.dat scrambler 
   key value = `(mode<<8) | signed fifths`.
 * Notes: `gfhold(staff, measure)` → `frameSpec.startEntry/endEntry` → linked entry chain (`v2Launch` = voice 2,
   `dummy` entries skipped, `ignore` → hidden). Tuplets from `tupletDef`, lyrics from `lyrDataVerse` + `texts/verse`
-  (split on spaces/hyphens), chords from `chordAssign`, expressions from `measExprAssign` + `textExprDef`,
+  (split on spaces/hyphens), chords from `chordAssign`, expressions from `measExprAssign` + `textExprDef` (text = `texts/expression[textBlock(textIDKey).textID]`;
+  identical expressions on several staves are shown once; staff-assigned ones stay on that staff),
   smart shapes (slurs, hairpins, 8va/8vb, trill, gliss, pedal, lines) from `smartShape` end points, repeats/endings,
   text repeats, system breaks (`staffSystemSpec`), page size/margins (`pageSpec`), staff groups, instrument names,
   transposition. Unknown data is skipped; `score.importInfo = {from:'finale', warnings}` lists what was approximated.

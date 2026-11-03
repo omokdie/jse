@@ -753,9 +753,9 @@ function vRunLen(img, w, h, x, y) {
 function inkAt(img, w, h, x, y) { x = rnd(x); y = rnd(y); return x >= 0 && y >= 0 && x < w && y < h && img[y * w + x] ? 1 : 0; }
 
 /** Counts beams/flags attached to a stem on one side within the free-end zone. */
-function countBars(ctx, nolines, stem, side, yA, yB) {
+function countBars(ctx, nolines, stem, side, yA, yB, off = 0.55) {
   const { w, h, sp } = ctx;
-  const x2 = rnd(stem.x + side * 0.55 * sp), x1 = rnd(stem.x + side * 0.25 * sp), x3 = rnd(stem.x + side * 0.9 * sp);
+  const x2 = rnd(stem.x + side * off * sp), x1 = rnd(stem.x + side * 0.25 * sp), x3 = rnd(stem.x + side * Math.max(0.9, off + 0.3) * sp);
   if (x2 < 0 || x2 >= w) return { n: 0, beam: false };
   let n = 0, beam = false;
   let y = Math.max(0, rnd(yA));
@@ -785,7 +785,8 @@ export function classify(ctx, staves, nolines, prims, options = {}) {
   const { cc, heads, stems } = prims;
   const warnings = [];
   const symbols = [];
-  glyphHook = ctx.models && ctx.models.glyphs ? makeGlyphHook(ctx, staves, ctx.models.glyphs, mlpPredict) : null;
+  ctx.nolines = nolines;
+  glyphHook = ctx.models && ctx.models.glyphs ? makeGlyphHook(ctx, staves, ctx.models.glyphs, mlpPredict, nolines) : null;
   try { return classifyInner(ctx, staves, nolines, prims, options, warnings, symbols); } finally { glyphHook = null; }
 }
 
@@ -827,7 +828,13 @@ function classifyInner(ctx, staves, nolines, prims, options, warnings, symbols) 
     const zoneB = dir === 'up' ? Math.min(s.y0 + 3.2 * sp, nearest - 0.9 * sp) : s.y1;
     let nb = 0, beam = false, conf = 0.9;
     if (zoneB - zoneA > 0.3 * sp) {
-      const L = countBars(ctx, nolines, s, -1, zoneA, zoneB), R = countBars(ctx, nolines, s, +1, zoneA, zoneB);
+      let L = countBars(ctx, nolines, s, -1, zoneA, zoneB), R = countBars(ctx, nolines, s, +1, zoneA, zoneB);
+      // photo pipeline: a curved flag can cross the probe column twice — the count must hold at a second offset
+      if (!options.legacyPreprocess) {
+        const L2 = countBars(ctx, nolines, s, -1, zoneA, zoneB, 0.8), R2 = countBars(ctx, nolines, s, +1, zoneA, zoneB, 0.8);
+        if (L2.n && L2.n < L.n) L = { ...L, n: L2.n };
+        if (R2.n && R2.n < R.n) R = { ...R, n: R2.n };
+      }
       nb = Math.max(L.n, R.n); beam = L.beam || R.beam;
       if (L.n && R.n && L.n !== R.n) conf = 0.7;
     } else conf = 0.6;
@@ -858,6 +865,8 @@ function classifyInner(ctx, staves, nolines, prims, options, warnings, symbols) 
     const wsp = c.w / sp, hsp = c.h / sp;
     const mid = (st.lines[0][clamp(rnd(c.cx), 0, w - 1)] + st.lines[4][clamp(rnd(c.cx), 0, w - 1)]) / 2;
     if (glyphHook) {
+      // rests sit near the staff middle and have bounded size (text, slurs, dynamics are classified otherwise)
+      if (Math.abs(c.cy - mid) > 2.6 * sp || hsp > 4.6 || hsp < 0.25 || wsp > 2.8 || wsp < 0.3) continue;
       const REST = { restWhole: 'whole', restHalf: 'half', restQuarter: 'quarter', rest8th: 'eighth', rest16th: '16th', rest32nd: '32nd' };
       const m = glyphHook(c, Object.keys(REST));
       if (m && m.score >= 0.55) { rests.push({ kind: 'rest', staff: st, x: c.cx, base: REST[m.name], dots: 0, conf: Math.min(0.95, m.score), comp: c, bbox: c }); used.add(c.id); }
@@ -1010,7 +1019,8 @@ function attachDotsAndAccidentals(ctx, events, comps, used) {
       if (best) { best.ev.dots = 1; used.add(c.id); }
       continue;
     }
-    if (hsp >= 1.8 && hsp <= 3.4 && wsp >= 0.45 && wsp <= 1.4) {
+    // (the learned classifier knows several music fonts: wider size window)
+    if (glyphHook ? (hsp >= 1.5 && hsp <= 3.8 && wsp >= 0.35 && wsp <= 1.9) : (hsp >= 1.8 && hsp <= 3.4 && wsp >= 0.45 && wsp <= 1.4)) {
       // accidental: immediately left of a head, vertically centred near it
       let best = null;
       for (const ev of events) {
@@ -1024,7 +1034,7 @@ function attachDotsAndAccidentals(ctx, events, comps, used) {
       }
       if (!best) continue;
       const m = bestTemplate(ctx.cc.labels, w, c, ['sharp', 'flat', 'natural'], sp, 0.32);
-      if (m && m.score >= 0.35) {
+      if (m && m.score >= 0.35 && (!glyphHook || m.name === m.top)) {
         // the flat's loop (lower part) marks the pitch; its bbox centre is ~0.45 sp higher
         best.hd.accidental = m.name; best.hd.accConf = m.score; used.add(c.id);
       }
@@ -1073,12 +1083,15 @@ function detectHeader(ctx, st, cc, options, warnings) {
       x = clefComp.x1 + 0.2 * sp;
       st.clefBox = clefComp;
       if (st.clef === 'bass') for (const c of inHeader) if (c.x0 > clefComp.x1 - sp && c.x0 < clefComp.x1 + 1.2 * sp && c.w < 0.7 * sp && c.h < 0.7 * sp) { st.headerLabels.push(c.id); x = Math.max(x, c.x1 + 0.2 * sp); }
+      // photos: a clef broken into pieces — the other pieces lie within the clef's width
+      if (glyphHook) for (const c of inHeader) if (c !== clefComp && c.x0 >= clefComp.x0 - 0.5 * sp && c.x1 <= clefComp.x0 + 2.75 * sp && c.x1 > x - 0.2 * sp && c.y1 > top - 3 * sp && c.y0 < bottom + 3 * sp) { st.headerLabels.push(c.id); x = Math.max(x, c.x1 + 0.2 * sp); }
     }
   }
   if (!st.clef) { st.clef = 'treble'; st.clefMissing = true; }
   // key signature: run of accidental-sized components
   let sharps = 0, flats = 0, lastX = x;
-  for (const c of inHeader) {
+  if (glyphHook && glyphHook.probs) ({ sharps, flats, x } = readKeyLearned(ctx, st, inHeader, x));
+  else for (const c of inHeader) {
     if (c.x0 < lastX - 0.3 * sp) continue;
     if (c.x0 > lastX + 1.6 * sp) break;
     const hsp = c.h / sp, wsp = c.w / sp;
@@ -1131,6 +1144,80 @@ function detectHeader(ctx, st, cc, options, warnings) {
   }
   st.headerEnd = x + 0.4 * sp;
   void warnings;
+}
+
+/** Key signature with the learned glyph classifier: a run of sharps or flats
+ * after the clef.  Touching accidentals (frequent in photos: they are ~1 sp
+ * wide and ~1 sp apart) form one wide component, which is cut into k equal
+ * pieces (k from its width) and each piece's ink box is classified. */
+function readKeyLearned(ctx, st, inHeader, x) {
+  const { sp, w, h } = ctx;
+  const nol = ctx.nolines;
+  let sharps = 0, flats = 0, lastX = x, type = null;
+  const inkBox = (x0, x1, y0, y1) => {
+    // tight ink box of the line-free image inside a window
+    let a = Infinity, b = -1, c = Infinity, d = -1;
+    for (let yy = Math.max(0, y0); yy <= Math.min(h - 1, y1); yy++) for (let xx = Math.max(0, x0); xx <= Math.min(w - 1, x1); xx++) if (nol[yy * w + xx]) { if (xx < a) a = xx; if (xx > b) b = xx; if (yy < c) c = yy; if (yy > d) d = yy; }
+    return b < 0 ? null : { x0: a, x1: b, y0: c, y1: d };
+  };
+  const accOf = (p) => (p.sharp >= p.flat ? ['sharp', p.sharp] : ['flat', p.flat]);
+  // staff-line removal can cut an accidental into pieces (a flat's stem and bowl, a
+  // natural's strokes): a narrow piece absorbs the component right of it first
+  const units = [];
+  for (const c of inHeader) {
+    const u = units[units.length - 1];
+    const narrow = (q) => q.x1 - q.x0 + 1 < 0.45 * sp;
+    if (u && c.x0 >= u.x0 && c.x0 <= u.x1 + 0.25 * sp && narrow(u) && Math.max(u.x1, c.x1) - u.x0 + 1 <= 1.35 * sp) {
+      u.x1 = Math.max(u.x1, c.x1); u.y0 = Math.min(u.y0, c.y0); u.y1 = Math.max(u.y1, c.y1);
+      u.w = u.x1 - u.x0 + 1; u.h = u.y1 - u.y0 + 1; u.area += c.area; u.ids.push(c.id);
+      continue;
+    }
+    units.push({ id: c.id, x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, w: c.w, h: c.h, area: c.area, ids: [c.id] });
+  }
+  for (const c of units) {
+    if (c.x0 < lastX - 0.3 * sp) continue;
+    if (c.x0 > lastX + 1.6 * sp) break;
+    const hsp = c.h / sp, wsp = c.w / sp;
+    // small blobs right after the clef (big bass-clef dots, clef debris) do not end the key signature
+    if (!type && hsp < 1.45 && wsp < 1.2 && c.x0 < x + 1.2 * sp) { lastX = Math.max(lastX, c.x1); x = Math.max(x, c.x1 + 0.2 * sp); st.headerLabels.push(...c.ids); continue; }
+    // (merged runs of accidentals at different heights are up to ~6 sp tall)
+    if (hsp < 1.5 || hsp > (wsp > 1.25 ? 6.3 : 4.6) || wsp < 0.35 || wsp > 7.5) break;
+    const p = glyphHook.probs(c);
+    let [acc, pa] = accOf(p);
+    let n = 0;
+    if (wsp <= 1.75 && pa >= 0.45 && pa >= p.natural) n = 1;
+    if (wsp > 1.25 && nol) {
+      // possibly k touching accidentals: try equal cuts, keep the most convincing
+      let best = n ? { k: 1, score: pa * (wsp <= 1.45 ? 1 : 0.8), acc } : null;
+      for (let k = 2; k <= 7; k++) {
+        const pw = c.w / k;
+        if (pw < 0.55 * sp || pw > 1.75 * sp) continue;      // (handwritten-style fonts: sharps up to ~1.7 sp wide)
+        let tot = 0, kind = null, ok = true;
+        for (let i = 0; i < k && ok; i++) {
+          // vertical extent from the piece's central columns (the neighbours overlap its edges)
+          const xa = Math.round(c.x0 + i * pw), xb = Math.round(c.x0 + (i + 1) * pw) - 1;
+          const core = inkBox(Math.round(xa + 0.25 * pw), Math.round(xb - 0.25 * pw), c.y0, c.y1);
+          if (!core || (core.y1 - core.y0) < 1.3 * sp) { ok = false; break; }
+          const bx = { x0: xa, x1: xb, y0: core.y0, y1: core.y1 };
+          const q = glyphHook.probs(bx);
+          const [ak, pk] = accOf(q);
+          if (kind && ak !== kind) { ok = false; break; }
+          kind = ak; tot += pk;
+        }
+        if (!ok) continue;
+        const score = tot / k;
+        if (score >= 0.45 && (!best || score > best.score)) best = { k, score, acc: kind };
+      }
+      if (best) { n = best.k; acc = best.acc; }
+    }
+    if (!n) break;
+    if (type && acc !== type) break;
+    type = acc;
+    if (acc === 'sharp') sharps += n; else flats += n;
+    st.headerLabels.push(...c.ids); lastX = c.x1; x = c.x1 + 0.2 * sp;
+    if (sharps + flats >= 7) break;
+  }
+  return { sharps: Math.min(7, sharps), flats: Math.min(7, flats), x };
 }
 
 /** System-level barlines: thin vertical objects spanning a staff (or the whole
@@ -1224,6 +1311,12 @@ export function assemble(ctx, staves, cls, image, options = {}) {
   const keyVotes = {}, tsVotes = {};
   for (const st of staves) { keyVotes[st.keyFifths] = (keyVotes[st.keyFifths] || 0) + 1; if (st.timeSig) { const k = `${st.timeSig.num}/${st.timeSig.den}/${st.timeSig.display}`; tsVotes[k] = (tsVotes[k] || 0) + 1; } }
   let keyFifths = options.keyFifths != null ? options.keyFifths : parseInt((Object.entries(keyVotes).sort((a, b) => b[1] - a[1])[0] || ['0'])[0], 10);
+  // a misread key signature is mostly "nothing found" (0); the same non-zero key on
+  // several staves is strong evidence (photo pipeline: broken clefs, faint headers)
+  if (options.keyFifths == null && !options.legacyPreprocess) {
+    const nz = Object.entries(keyVotes).filter(([k]) => +k !== 0 && k !== 'null').sort((a, b) => b[1] - a[1])[0];
+    if (nz && nz[1] >= 2 && nz[1] >= 0.35 * staves.length) keyFifths = +nz[0];
+  }
   let timeSig = null;
   if (options.timeSig) timeSig = { ...options.timeSig, display: 'normal' };
   else { const best = Object.entries(tsVotes).sort((a, b) => b[1] - a[1])[0]; if (best) { const [num, den, display] = best[0].split('/'); timeSig = { num: +num, den: +den, display }; } }
@@ -1258,6 +1351,7 @@ export function assemble(ctx, staves, cls, image, options = {}) {
   const tieCarry = [];
   let measureConfSum = 0;
   splitOverfullMeasures(rawMeasures, capacity);
+  if (!options.legacyPreprocess) mergeUnderfullMeasures(rawMeasures, capacity);
   rawMeasures.forEach((rm, mi) => {
     const m = createMeasure(score);
     if (mi === 0) { m.timeSig = timeSig; m.keySig = { fifths: keyFifths, mode: 'major' }; }
@@ -1367,6 +1461,29 @@ function splitOverfullMeasures(rawMeasures, capacity) {
   }
 }
 
+/** The converse: two neighbouring measures of one system that are both clearly
+ * short but add up to exactly one measure were most likely split by a false
+ * barline (a stem or a thick stroke).  Only single barlines are removed, and
+ * never the first measure (pickup). */
+function mergeUnderfullMeasures(rawMeasures, capacity) {
+  const ticksOf = (ev) => durTicks({ dur: { base: ev.base, dots: ev.dots } });
+  const tot = (rm) => rm.staves.map(evs => evs.reduce((a, ev) => a + ticksOf(ev), 0));
+  for (let i = 1; i + 1 < rawMeasures.length; i++) {
+    const a = rawMeasures[i], b = rawMeasures[i + 1];
+    if (a.sys !== b.sys || a.split || b.split) continue;
+    if (a.bar && a.bar.type && a.bar.type !== 'single') continue;
+    const ta = tot(a), tb = tot(b);
+    let used = 0, ok = true;
+    for (let si = 0; si < ta.length && ok; si++) {
+      if (!ta[si] && !tb[si]) continue;
+      used++;
+      ok = ta[si] > 0 && tb[si] > 0 && ta[si] <= 0.76 * capacity && tb[si] <= 0.76 * capacity && Math.abs(ta[si] + tb[si] - capacity) <= 0.04 * capacity;
+    }
+    if (!ok || !used) continue;
+    rawMeasures.splice(i, 2, { ...a, x1: b.x1, bar: b.bar, staves: a.staves.map((evs, si) => [...evs, ...b.staves[si]]), merged: true });
+  }
+}
+
 /** Make a voice sum to the measure capacity: re-label the least confident
  * durations first, then pad / trim with rests. Returns {conf, pickup}. */
 function fitVoice(voice, capacity, first) {
@@ -1440,9 +1557,21 @@ export async function recognize(image, options = {}, onProgress = () => {}) {
   const first = await recognizeOnce(image, { ...options, legacyPreprocess: true }, scaled(0, 40));
   if (first.staves.length && first.confidence >= AUTO_KEEP_CONFIDENCE) { onProgress({ stage: 'assemble', percent: 100, message: '완료' }); return { ...first, pipeline: 'legacy' }; }
   const second = await recognizeOnce(image, { ...options, legacyPreprocess: false }, scaled(40, 100));
-  return second.staves.length && second.confidence > first.confidence ? { ...second, pipeline: 'photo' } : { ...first, pipeline: 'legacy' };
+  // measure-fit confidence alone favours a result that lost most notes (short
+  // measures padded with rests still "fit"): weigh it by the share of notes found
+  const nNotes = (r) => r.score.measures.reduce((a, m) => a + m.staves.reduce((b, s) => b + s.voices[0].filter(e => e.kind === 'note').length, 0), 0);
+  // and by the share of staves found (a pipeline that lost whole systems is worse); below the
+  // keep threshold the image is most likely a photo, which the photo pipeline is built for, so
+  // the original result must win by a margin
+  const n1 = first.staves.length ? nNotes(first) : 0, n2 = second.staves.length ? nNotes(second) : 0, nMax = Math.max(1, n1, n2);
+  const sMax = Math.max(1, first.staves.length, second.staves.length);
+  // (only a lopsided note count counts: one pipeline may also over-detect)
+  const q1 = first.confidence * Math.min(1, n1 / nMax / 0.6) * (first.staves.length / sMax);
+  const q2 = second.confidence * Math.min(1, n2 / nMax / 0.6) * (second.staves.length / sMax);
+  return second.staves.length && q2 > q1 - AUTO_PHOTO_MARGIN ? { ...second, pipeline: 'photo' } : { ...first, pipeline: 'legacy' };
 }
 const AUTO_KEEP_CONFIDENCE = 0.9;
+const AUTO_PHOTO_MARGIN = 0.05;
 
 async function recognizeOnce(image, options = {}, onProgress = () => {}) {
   const progress = (stage, percent, message) => { try { onProgress({ stage, percent, message }); } catch (_) { /* ignore */ } };
@@ -1464,6 +1593,9 @@ async function recognizeOnce(image, options = {}, onProgress = () => {}) {
   }
   // learned classifiers (classifiers.js, lazily imported weights; options.learned === false disables)
   if (!options.legacyPreprocess && options.learned !== false) ctx.models = { heads: await loadModel('heads'), glyphs: await loadModel('glyphs') };
+  // the original pipeline keeps its morphological note heads but reads clefs, key / time signatures,
+  // rests and accidentals with the learned glyph classifier too (it knows several music fonts)
+  else if (options.legacyPreprocess && options.learned !== false && options.learnedLegacy !== false) ctx.models = { heads: null, glyphs: await loadModel('glyphs') };
   const nolines = removeStaffLines(ctx, staves);
   progress('symbols', 50, '오선 제거 완료');
   await yieldNow();

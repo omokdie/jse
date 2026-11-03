@@ -20,7 +20,17 @@ CLASSES = ['none', 'sharp', 'flat', 'natural', 'restWhole', 'restHalf', 'restQua
            'common', 'cut', 'dot']
 
 
-def load(base):
+def load(bases):
+    """One or more extraction outputs (comma-separated bases), concatenated;
+    image ids stay distinct so the per-image validation split still works."""
+    parts = [load_one(b) for b in bases.split(',')]
+    off, Xs, ys, imgs = 0, [], [], []
+    for X, y, img in parts:
+        Xs.append(X); ys.append(y); imgs.append(img + off); off += int(img.max()) + 1 if len(img) else 0
+    return np.concatenate(Xs), np.concatenate(ys), np.concatenate(imgs)
+
+
+def load_one(base):
     raw = np.fromfile(base + '.bin', np.uint8)
     n = len(raw) // REC
     raw = raw[:n * REC].reshape(n, REC)

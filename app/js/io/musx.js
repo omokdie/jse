@@ -747,21 +747,34 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     const mi = +ea.attrs.cmper - 1; const m = score.measures[mi]; if (!m) continue;
     if (!kid(ea, 'textExprID')) continue;     // shape expressions are skipped
     const def = exprDefs.get(txt(ea, 'textExprID')); if (!def) continue;
-    const raw = doc.text('expression', int(def, 'textIDKey')); if (raw == null) continue;
+    // textIDKey names a textBlock whose textID is the expression text (often, but not always, the same number)
+    const key = int(def, 'textIDKey');
+    const tblk = textBlocks.get(String(key));
+    const tid = tblk && (txt(tblk, 'textTag') || 'expression') === 'expression' ? int(tblk, 'textID', key) : key;
+    const raw = doc.text('expression', tid) ?? doc.text('expression', key); if (raw == null) continue;
     const catId = int(def, 'categoryID', 0);
     const cat = catTypes.get(catId) || catDefault[catId] || 'misc';
     const value = int(def, 'value', 0);
     const runs = enigmaRuns(raw, ctx, { value: value || '' });
-    const plain = runsToPlain(runs);
+    const plain = runsToPlain(runs).replace(/\s*\n\s*/g, ' ').trim();
     const fid = int(ea, 'staffAssign', 0);
     const staffG = staffInfo.has(fid) ? staffInfo.get(fid).gIndex : 0;
     const tick = toTicks(int(ea, 'horzEduOff', 0));
     const layer = Math.max(1, int(ea, 'layer', 1));
     const vAlign = txt(def, 'vertMeasExprAlign') || '';
     const placement = /below/i.test(vAlign) ? 'below' : /above/i.test(vAlign) ? 'above' : (cat === 'dynamics' ? 'below' : 'above');
-    if (cat === 'tempoMarks' || txt(def, 'playType') === 'time') {
+    // tempo words / metronome marks filed under another category still set the tempo
+    const looksTempo = /[\u2669\u266A]\s*=|^\s*(Grave|Largo|Larghetto|Lento|Adagio|Adagietto|Andante|Andantino|Moderato|Allegretto|Allegro|Vivace|Vivo|Presto|Prestissimo|Tempo di|Tempo I)\b/i.test(plain);
+    if (cat === 'tempoMarks' || txt(def, 'playType') === 'time' || (looksTempo && cat !== 'tempoAlts')) {
       const tempo = tempoFromRuns(runs, value, int(def, 'auxdata1', 1024));
       if (tempo && !m.tempo) { m.tempo = tempo; continue; }
+      if (tempo && m.tempo) {
+        // the same tempo mark is often assigned to several staves (band/orchestra scores) — show it once
+        if ((m.tempo.text || '') === (tempo.text || '') && (!tempo.showBpm || m.tempo.bpm === tempo.bpm)) continue;
+        // "Allegro" + a separate "♩ = 132" → one marking
+        if (!m.tempo.showBpm && tempo.showBpm && !tempo.text) { Object.assign(m.tempo, { bpm: tempo.bpm, beatUnit: tempo.beatUnit, dots: tempo.dots, showBpm: true }); continue; }
+        if (m.tempo.showBpm && !m.tempo.text && tempo.text && !tempo.showBpm) { m.tempo.text = tempo.text; continue; }
+      }
     }
     if (cat === 'rehearsalMarks') {
       rehearsalSeq++;
@@ -777,12 +790,15 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     if (!plain) continue;
     const style = cat === 'techniqueText' ? 'technique' : (cat === 'expressiveText' || cat === 'tempoAlts' || cat === 'dynamics') ? 'expression' : 'plain';
     const ev = eventAt(score, mi, staffG, tick, layer - 1);
-    if (ev && tick > 0) (ev.texts || (ev.texts = [])).push({ text: plain, placement, style });
+    // expressions assigned to one staff stay with that staff (e.g. "S.D." on the percussion staff, "div." on a wind part)
+    const staffSpecific = fid > 0 && staffInfo.has(fid) && !looksTempo && cat !== 'rehearsalMarks';
+    if (ev && (tick > 0 || staffSpecific)) { const et = ev.texts || (ev.texts = []); if (!et.some(t => t.text === plain)) et.push({ text: plain, placement, style }); }
     else {
       const arr = m.texts || (m.texts = []);
       const mk = markerFromText(plain);
       if (mk) (m.markers || (m.markers = [])).includes(mk) || m.markers.push(mk);
-      else arr.push({ text: plain, placement, style: style === 'plain' ? 'plain' : style });
+      // measure texts are not per staff here, so one expression assigned to many staves must appear once
+      else if (!arr.some(t => t.text === plain) && (m.tempo?.text || '') !== plain) arr.push({ text: plain, placement, style: style === 'plain' ? 'plain' : style });
     }
   }
 
