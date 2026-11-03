@@ -32,15 +32,17 @@ GitHub 저장소 하나로 **Windows exe, Android apk, 웹앱, 자동 업데이�
 
 ## 새 버전 내보내기
 
-1. `app/version.json` 의 `version` 을 올립니다 (예: `1.0.0` → `1.0.1`).
-2. 커밋하고 같은 번호로 태그를 붙여 올립니다.
+1. `app/version.json` 의 `version` 을 올립니다 (예: `1.0.0` → `1.0.1`). 업데이트 안내 문구는 `release.json` 의 `notes` 에 적습니다.
+2. 커밋해서 main 에 올리면 끝입니다. (태그는 필요 없습니다 — 워크플로가 `v1.0.1` 태그와 릴리스를 직접 만듭니다.)
    ```bash
-   git commit -am "v1.0.1" && git tag v1.0.1 && git push && git push --tags
+   git commit -am "v1.0.1" && git push
    ```
-3. 몇 분 뒤 GitHub **Releases** 에 자동으로 올라옵니다.
-   - `JSE-Setup-1.0.1.exe` — Windows 설치 파일
+3. 10~20분 뒤 GitHub **Releases** 에 자동으로 올라옵니다.
+   - `JSE-Setup-1.0.1.exe` — Windows 설치 파일 (+ 자동 업데이트용 `latest.yml`)
    - `JSE-1.0.1.apk` — Android 앱
-   - 웹앱은 `https://<계정>.github.io/jse/` 에 자동 반영
+   - 웹앱은 `https://<계정>.github.io/jse/` 에 자동 반영 (Android 앱도 이 웹 번들로 무선 업데이트)
+
+빌드가 실패하면 고친 뒤 다시 main 에 올리면 됩니다 — 파일이 다 붙지 않은 릴리스는 다음 push 때 다시 빌드됩니다. 같은 버전을 강제로 다시 만들려면 **Actions → Release → Run workflow** 에서 `force` 를 켜고 실행합니다. 직접 `v*` 태그를 올려도 똑같이 동작합니다(태그는 `app/version.json` 과 같아야 함).
 
 ## 사용자 쪽에서 업데이트되는 방식
 
@@ -57,6 +59,6 @@ GitHub 저장소 하나로 **Windows exe, Android apk, 웹앱, 자동 업데이�
 | 파일 | 하는 일 |
 |---|---|
 | `.github/workflows/build-web.yml` | main에 올릴 때마다 웹앱을 Pages에 배포, Android 무선 업데이트용 `web-<버전>.zip`·`version.json` 생성 |
-| `.github/workflows/release.yml` | `v*` 태그 → 릴리스 생성 후 Windows·Android 빌드 실행 |
+| `.github/workflows/release.yml` | main 에 새 버전이 올라오면(또는 `v*` 태그) → 태그·릴리스 생성 후 Windows·Android 빌드 실행 |
 | `.github/workflows/build-windows.yml` | Windows에서 exe 빌드 → 릴리스에 업로드(+ 자동 업데이트용 `latest.yml`) |
 | `.github/workflows/build-android.yml` | apk 빌드 → 릴리스에 업로드 |

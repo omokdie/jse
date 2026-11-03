@@ -1,13 +1,19 @@
 name: Build Android APK
 
-# Builds mobile/android → JSE-<ver>.apk and, on a v* tag (called from
-# release.yml), attaches it to the GitHub Release.
+# Builds mobile/android → JSE-<ver>.apk and, when called from release.yml with a tag,
+# attaches it to that GitHub Release.
 # Signing: secrets ANDROID_KEYSTORE_BASE64 + ANDROID_KEYSTORE_PASSWORD (optional ANDROID_KEY_ALIAS,
 # default "jse"; ANDROID_KEY_PASSWORD, default = keystore password).  Without them the APK is signed
 # with a debug key (installable, but a later release-signed APK will not install over it).
 
 on:
   workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to attach the files to (empty = artifacts only)'
+        type: string
+        required: false
+        default: ''
   workflow_dispatch:
 
 permissions:
@@ -127,11 +133,11 @@ jobs:
           path: out/*.apk
           if-no-files-found: error
 
-      - name: Attach APK to the GitHub Release (tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Attach APK to the GitHub Release
+        if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
           files: out/JSE-${{ steps.meta.outputs.version }}.apk
           fail_on_unmatched_files: true
         env:

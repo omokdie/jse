@@ -1,40 +1,95 @@
 name: Release
 
-# git tag v1.2.0 && git push --tags  →  creates the GitHub Release "v1.2.0", then builds
-# and attaches JSE-Setup-1.2.0.exe (+ latest.yml for auto-update) and JSE-1.2.0.apk.
-# The web bundle / version.json go to GitHub Pages via build-web.yml (push to main or tag).
+# Creates the GitHub Release "v<version>" (version = app/version.json) and attaches
+# JSE-Setup-<ver>.exe (+ latest.yml for auto-update) and JSE-<ver>.apk.
+#
+# Triggers
+#   • push to main  → releases automatically when v<version> has no complete release yet
+#                     (bump app/version.json, push, done — no tag needed). A failed build is
+#                     retried on the next push to main because the release is still incomplete.
+#   • push a v* tag → same, for that tag (the tag must match app/version.json)
+#   • manual run    → Actions → Release → Run workflow (force: rebuild even if complete)
+# The web bundle / version.json go to GitHub Pages via build-web.yml.
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild and re-upload even if the release already has every file'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  create-release:
+  prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      build: ${{ steps.check.outputs.build }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check that the tag matches app/version.json
+      - name: Version and tag
         id: meta
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
           VERSION=$(node -p "require('./app/version.json').version")
-          echo "tag=$TAG version=$VERSION"
-          if [ "$TAG" != "$VERSION" ]; then
-            echo "::error::Tag v$TAG does not match app/version.json ($VERSION). Update app/version.json, commit, then tag again."
+          TAG="v${VERSION}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$TAG" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match app/version.json (${VERSION}). Update app/version.json, commit, then tag again."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Version $VERSION → $TAG"
+
+      - name: Is a (complete) release already there?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -uo pipefail
+          BUILD=true
+          if [ "$FORCE" != "true" ] && gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > assets.txt 2>/dev/null; then
+            if grep -qx "JSE-Setup-${VERSION}.exe" assets.txt && grep -qx "latest.yml" assets.txt && grep -qx "JSE-${VERSION}.apk" assets.txt; then
+              BUILD=false
+            fi
+          fi
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          if [ "$BUILD" = "true" ]; then echo "Building $TAG"; else echo "$TAG is already released with every file — nothing to do (bump app/version.json to release again)"; fi
+
+      - name: Point the tag at this commit
+        if: steps.check.outputs.build == 'true' && github.ref_type != 'tag'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "$TAG" -m "JSE $TAG" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$TAG"
+
+  create-release:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Release notes
         id: notes
@@ -43,13 +98,13 @@ jobs:
           NOTES=$(node -p "try { require('./release.json').notes || '' } catch (e) { '' }")
           OWNER="${{ github.repository_owner }}"
           REPO="${{ github.event.repository.name }}"
-          V="${{ steps.meta.outputs.version }}"
+          V="${{ needs.prepare.outputs.version }}"
           {
             echo "body<<__EOF__"
             if [ -n "$NOTES" ]; then echo "$NOTES"; echo; fi
             echo "### 다운로드"
             echo "- Windows: \`JSE-Setup-${V}.exe\` (설치 후 자동 업데이트)"
-            echo "- Android: \`JSE-${V}.apk\` (설치 후 웹 번들 자동 업데이트)"
+            echo "- Android: \`JSE-${V}.apk\` (휴대폰·태블릿, 설치 후 자동 업데이트)"
             echo "- 웹/PWA: https://${OWNER}.github.io/${REPO}/"
             echo
             echo "_빌드 파일은 워크플로가 끝나면 아래에 추가됩니다._"
@@ -59,36 +114,40 @@ jobs:
       - name: Create (or update) the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: JSE v${{ steps.meta.outputs.version }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: JSE v${{ needs.prepare.outputs.version }}
           body: ${{ steps.notes.outputs.body }}
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(needs.prepare.outputs.version, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   windows:
-    needs: create-release
+    needs: [prepare, create-release]
     uses: ./.github/workflows/build-windows.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
     secrets: inherit
     permissions:
       contents: write
 
   android:
-    needs: create-release
+    needs: [prepare, create-release]
     uses: ./.github/workflows/build-android.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
     secrets: inherit
     permissions:
       contents: write
 
   summary:
-    needs: [create-release, windows, android]
-    if: always()
+    needs: [prepare, create-release, windows, android]
+    if: always() && needs.prepare.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Summary
         run: |
-          echo "### JSE v${{ needs.create-release.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### JSE ${{ needs.prepare.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Windows: ${{ needs.windows.result }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Android: ${{ needs.android.result }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"

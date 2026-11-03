@@ -26,7 +26,7 @@ cd app && python3 -m http.server 8080      # 또는: npx serve app
 
 ## Windows 설치 파일(.exe)과 Android 앱(.apk) 만들기
 
-가장 쉬운 방법은 **GitHub에 올리고 태그만 붙이는 것**입니다 — exe·apk가 자동으로 만들어지고, 그 GitHub 주소가 자동 업데이트 서버 역할까지 합니다. 단계별 안내는 [RELEASING.md](RELEASING.md)를 보세요.
+가장 쉬운 방법은 **GitHub에 올리는 것**입니다 — `app/version.json` 버전을 올려 main 에 push 하면 exe·apk가 자동으로 만들어지고, 그 GitHub 주소가 자동 업데이트 서버 역할까지 합니다. 단계별 안내는 [RELEASING.md](RELEASING.md)를 보세요.
 
 PC에서 직접 빌드하려면:
 
