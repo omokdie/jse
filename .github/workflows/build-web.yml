@@ -27,11 +27,12 @@ jobs:
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Read version
         id: meta
@@ -56,7 +57,7 @@ jobs:
         run: node .github/scripts/write-version-manifest.mjs --site site --zip "site/web-${{ steps.meta.outputs.version }}.zip" --repo "${{ github.repository }}"
 
       - name: Keep the bundle as a workflow artifact too
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: web-bundle-${{ steps.meta.outputs.version }}
           path: |
