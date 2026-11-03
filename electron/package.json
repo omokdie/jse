@@ -1,0 +1,118 @@
+{
+  "name": "jse",
+  "productName": "JSE",
+  "version": "1.0.0",
+  "description": "JSE — 악보 사진을 인식하고 편집하는 오프라인 악보 프로그램",
+  "private": true,
+  "main": "main.js",
+  "homepage": "https://github.com/omokdie/jse",
+  "author": {
+    "name": "JSE"
+  },
+  "scripts": {
+    "sync-version": "node scripts/sync-version.mjs",
+    "make-icons": "node scripts/make-icons.mjs",
+    "start": "npm run sync-version && electron .",
+    "pack": "npm run sync-version && electron-builder --win nsis --x64 --dir",
+    "dist:win": "npm run sync-version && electron-builder --win nsis --x64 --publish never",
+    "release:win": "npm run sync-version && electron-builder --win nsis --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-log": "^5.2.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "kr.scoresnap.app",
+    "productName": "JSE",
+    "copyright": "Copyright © 2026 JSE",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "updater.js",
+      "menu.js",
+      "protocol.js",
+      "settings.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../app",
+        "to": "web",
+        "filter": [
+          "**/*",
+          "!**/.DS_Store",
+          "!**/Thumbs.db"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "JSE-Setup-${version}.${ext}",
+      "publisherName": "JSE"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "JSE",
+      "installerLanguages": [
+        "ko_KR",
+        "en_US"
+      ],
+      "language": "1042",
+      "artifactName": "JSE-Setup-${version}.${ext}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "fileAssociations": [
+      {
+        "ext": "ssnap",
+        "name": "JSE 악보",
+        "description": "JSE score",
+        "mimeType": "application/x-scoresnap",
+        "role": "Editor",
+        "icon": "build/ssnap.ico"
+      },
+      {
+        "ext": [
+          "musx",
+          "ftmx"
+        ],
+        "name": "Finale 악보",
+        "description": "Finale notation file",
+        "mimeType": "application/vnd.makemusic.notation",
+        "role": "Viewer",
+        "icon": "build/ssnap.ico"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "omokdie",
+        "repo": "jse",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "appId": "kr.scoresnap.app",
+  "appName": "JSE",
+  "webDir": "www",
+  "loggingBehavior": "production",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false,
+    "backgroundColor": "#f6f6f4"
+  }
+}

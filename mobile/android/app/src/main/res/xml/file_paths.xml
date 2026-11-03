@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths (authority ${applicationId}.fileprovider)
+     - cache/.      : Capacitor's WebView camera capture temp images + our share/ folder
+     - files/.      : app files (OTA bundles are never shared, but harmless)
+     - external     : Capacitor template default -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="my_cache_images" path="." />
+    <files-path name="my_files" path="." />
+    <external-path name="my_images" path="." />
+    <external-files-path name="my_external_files" path="." />
+</paths>

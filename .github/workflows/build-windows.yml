@@ -1,0 +1,103 @@
+name: Build Windows installer
+
+# Builds electron/dist/JSE-Setup-<ver>.exe (+ latest.yml, .blockmap).
+# On a v* tag (called from release.yml) they are attached to the GitHub Release,
+# which is the electron-updater feed.  Manual runs only produce artifacts.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: electron
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+      - name: Fill in GitHub owner/repo if still the placeholder
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const gh = (pkg.build.publish || []).find(p => p.provider === "github");
+            if (gh && gh.owner === "REPLACE_GITHUB_OWNER") {
+              gh.owner = process.env.OWNER; gh.repo = process.env.REPO;
+              pkg.homepage = `https://github.com/${process.env.OWNER}/${process.env.REPO}`;
+              fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+              console.log(`::warning::electron/package.json build.publish owner was REPLACE_GITHUB_OWNER — using ${process.env.OWNER}/${process.env.REPO} for this build (commit the change to silence this)`);
+            }
+          '
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+
+      - name: Sync version from app/version.json
+        run: npm run sync-version
+
+      - name: Generate icons (only if not committed)
+        run: |
+          if [ -f build/icon.ico ] && [ -f build/ssnap.ico ]; then
+            echo "Using committed build/icon.ico and build/ssnap.ico (made by tools/icons/make-ico.mjs)"
+          else
+            npm i --no-save sharp
+            node scripts/make-icons.mjs
+          fi
+
+      - name: Code-signing certificate (optional secrets CSC_LINK / CSC_KEY_PASSWORD)
+        run: |
+          if [ -n "${CSC_LINK_SECRET}" ]; then
+            echo "CSC_LINK=${CSC_LINK_SECRET}" >> "$GITHUB_ENV"
+            echo "CSC_KEY_PASSWORD=${CSC_KEY_PASSWORD_SECRET}" >> "$GITHUB_ENV"
+            echo "Code signing: enabled"
+          else
+            echo "Code signing: not configured (unsigned exe → SmartScreen warning on first run)"
+          fi
+        env:
+          CSC_LINK_SECRET: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD_SECRET: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      # electron-builder still writes latest.yml (+ .blockmap) because build.publish is configured;
+      # the upload itself is done with action-gh-release below so re-runs are idempotent
+      # (electron-builder's own GitHub publisher refuses releases published > 2 h ago).
+      - name: Build installer
+        run: npm run dist:win
+
+      - name: List output
+        run: ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JSE-windows
+          path: |
+            electron/dist/*.exe
+            electron/dist/*.blockmap
+            electron/dist/latest.yml
+          if-no-files-found: error
+
+      - name: Attach installer + update feed to the GitHub Release (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            electron/dist/JSE-Setup-*.exe
+            electron/dist/JSE-Setup-*.exe.blockmap
+            electron/dist/latest.yml
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

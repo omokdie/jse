@@ -1,0 +1,94 @@
+name: Release
+
+# git tag v1.2.0 && git push --tags  →  creates the GitHub Release "v1.2.0", then builds
+# and attaches JSE-Setup-1.2.0.exe (+ latest.yml for auto-update) and JSE-1.2.0.apk.
+# The web bundle / version.json go to GitHub Pages via build-web.yml (push to main or tag).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches app/version.json
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION=$(node -p "require('./app/version.json').version")
+          echo "tag=$TAG version=$VERSION"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::Tag v$TAG does not match app/version.json ($VERSION). Update app/version.json, commit, then tag again."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          NOTES=$(node -p "try { require('./release.json').notes || '' } catch (e) { '' }")
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
+          V="${{ steps.meta.outputs.version }}"
+          {
+            echo "body<<__EOF__"
+            if [ -n "$NOTES" ]; then echo "$NOTES"; echo; fi
+            echo "### 다운로드"
+            echo "- Windows: \`JSE-Setup-${V}.exe\` (설치 후 자동 업데이트)"
+            echo "- Android: \`JSE-${V}.apk\` (설치 후 웹 번들 자동 업데이트)"
+            echo "- 웹/PWA: https://${OWNER}.github.io/${REPO}/"
+            echo
+            echo "_빌드 파일은 워크플로가 끝나면 아래에 추가됩니다._"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create (or update) the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: JSE v${{ steps.meta.outputs.version }}
+          body: ${{ steps.notes.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows:
+    needs: create-release
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+    permissions:
+      contents: write
+
+  android:
+    needs: create-release
+    uses: ./.github/workflows/build-android.yml
+    secrets: inherit
+    permissions:
+      contents: write
+
+  summary:
+    needs: [create-release, windows, android]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "### JSE v${{ needs.create-release.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Windows: ${{ needs.windows.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Android: ${{ needs.android.result }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,26 @@
+{
+  "name": "scoresnap-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JSE Android shell (Capacitor 6)",
+  "scripts": {
+    "www": "node scripts/sync-www.mjs --src ../app --out www",
+    "icons": "node scripts/make-android-icons.mjs",
+    "sync": "npm run www && npx cap sync android",
+    "copy": "npm run www && npx cap copy android",
+    "open": "npx cap open android",
+    "build:apk": "npm run sync && cd android && ./gradlew assembleRelease",
+    "build:apk:debug": "npm run sync && cd android && ./gradlew assembleDebug",
+    "wrapper": "cd android && gradle wrapper --gradle-version 8.7 --distribution-type bin"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/filesystem": "^6.0.2",
+    "@capacitor/share": "^6.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}

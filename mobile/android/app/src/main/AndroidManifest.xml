@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- OTA web-bundle updates (SPEC §7) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- <input type="file" capture> in the WebView: Capacitor asks for CAMERA at runtime when it is declared -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Downloads/JSE on Android 9 and below (API 29+ uses MediaStore without a permission) -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+    <!-- Lets the app hand a downloaded APK to the package installer (self-update when minNative rises).
+         Remove if you only ever distribute through an app store. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:exported="true"
+            android:label="@string/title_activity_main"
+            android:launchMode="singleTask"
+            android:theme="@style/AppTheme.NoActionBarLaunch">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- 1) .ssnap by MIME type (apps that know the type) -->
+            <intent-filter android:label="@string/ssnap_file_label">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-scoresnap" />
+            </intent-filter>
+
+            <!-- 2) .ssnap by extension when a MIME type is given (file managers often send
+                    application/octet-stream or */*).  pathPattern is only evaluated when a host
+                    is set; the repeated patterns are the well-known workaround for names that
+                    contain several dots ("my.song.v2.ssnap"). -->
+            <intent-filter android:label="@string/ssnap_file_label">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\.SSNAP" />
+            </intent-filter>
+
+            <!-- 3) .ssnap by extension when NO MIME type is given (older file managers, file:// links) -->
+            <intent-filter android:label="@string/ssnap_file_label">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.ssnap" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\..*\\.ssnap" />
+            </intent-filter>
+
+            <!-- 3b) Finale notation files (.musx / .ftmx) — imported and converted to a JSE score -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.musx" />
+                <data android:pathPattern=".*\\..*\\.musx" />
+                <data android:pathPattern=".*\\..*\\..*\\.musx" />
+                <data android:pathPattern=".*\\.MUSX" />
+                <data android:pathPattern=".*\\.ftmx" />
+            </intent-filter>
+
+            <!-- 4) Share sheet: any single file (scores, photos of scores for OMR, MusicXML …) -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Shares exported files and lets the WebView camera capture write its temp image -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+</manifest>

@@ -1,0 +1,117 @@
+import groovy.json.JsonSlurper
+
+apply plugin: 'com.android.application'
+
+// ---------------------------------------------------------------------------
+// Version: single source of truth is <repo>/app/version.json  {"version":"1.2.3"}
+//   versionName = 1.2.3            (override: ANDROID_VERSION_NAME)
+//   versionCode = 1*10000+2*100+3  (override: ANDROID_VERSION_CODE)  → 1.2.3 = 10203
+// ---------------------------------------------------------------------------
+def readWebAppVersion = {
+    def f = rootProject.file('../../app/version.json')
+    if (!f.exists()) {
+        logger.warn("app/version.json not found at ${f} — using 0.0.0")
+        return '0.0.0'
+    }
+    def json = new JsonSlurper().parse(f)
+    def v = (json.version ?: '0.0.0').toString().trim()
+    if (!(v ==~ /\d+\.\d+\.\d+([-+].*)?/)) {
+        throw new GradleException("app/version.json: invalid version '${v}' (expected x.y.z)")
+    }
+    return v
+}
+
+def computeVersionCode = { String v ->
+    def core = v.replaceAll(/[-+].*$/, '')
+    def parts = core.tokenize('.')
+    def nums = (0..2).collect { i -> (parts.size() > i && parts[i].isInteger()) ? parts[i].toInteger() : 0 }
+    if (nums[1] > 99 || nums[2] > 99) {
+        throw new GradleException("version ${v}: minor/patch must be <= 99 for the versionCode scheme")
+    }
+    return nums[0] * 10000 + nums[1] * 100 + nums[2]
+}
+
+def appVersionName = System.getenv('ANDROID_VERSION_NAME') ?: readWebAppVersion()
+def appVersionCode = (System.getenv('ANDROID_VERSION_CODE') ?: computeVersionCode(appVersionName).toString()).toInteger()
+
+// ---------------------------------------------------------------------------
+// Release signing from the environment (CI secrets); falls back to the debug key so
+// `assembleRelease` always produces an installable APK (not updatable with a real key!).
+//   KEYSTORE_PATH  KEYSTORE_PASSWORD  KEY_ALIAS  KEY_PASSWORD
+// ---------------------------------------------------------------------------
+def keystorePath = System.getenv('KEYSTORE_PATH')
+def hasReleaseKeystore = keystorePath != null && !keystorePath.isEmpty() && file(keystorePath).exists()
+if (!hasReleaseKeystore) {
+    logger.warn('KEYSTORE_PATH not set or file missing — release APK will be signed with the DEBUG key')
+}
+
+android {
+    namespace "kr.scoresnap.app"
+    compileSdk rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "kr.scoresnap.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode appVersionCode
+        versionName appVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+            // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+            // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv('KEYSTORE_PASSWORD') ?: ''
+                keyAlias System.getenv('KEY_ALIAS') ?: ''
+                keyPassword System.getenv('KEY_PASSWORD') ?: ''
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    // JSE-1.2.3.apk / JSE-1.2.3-debug.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def suffix = variant.buildType.name == 'release' ? '' : "-${variant.buildType.name}"
+            outputFileName = "JSE-${variant.versionName}${suffix}.apk"
+        }
+    }
+}
+
+repositories {
+    flatDir {
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'

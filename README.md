@@ -1,0 +1,68 @@
+# JSE — 악보 사진 인식 · 편집 · 내보내기
+
+악보 사진(카메라·이미지·PDF)을 인식해 편집 가능한 악보로 바꾸고, 바로 고쳐서 PDF·이미지·MusicXML로 내보내는 프로그램입니다.
+하나의 코드로 **Windows 설치 프로그램(.exe)**, **Android 앱(.apk, 휴대폰·태블릿)**, **웹앱(PWA)** 을 모두 만듭니다. 세 가지 모두 같은 `.ssnap` 파일을 열고 저장합니다. 화면 크기에 따라 휴대폰·태블릿·PC 화면 구성으로 자동 전환됩니다.
+
+## 주요 기능
+
+| 분류 | 기능 |
+|---|---|
+| 악보 인식 | 카메라 촬영·사진·PDF·이미지 주소·붙여넣기 → 오선/음표/쉼표/임시표/박자/조표/세로줄 인식 → 원본과 결과를 나란히 보며 검토(불확실한 마디 주황색 표시) → 편집기에서 원본 사진 조각과 대조하며 수정 |
+| 편집 | **피날레 방식 도구**(선택·음표 입력·이음줄/셈여림 등 모양·아티큘레이션·표현·가사·코드·텍스트·마디). 음표 입력은 놓일 자리를 흐린 미리보기 음표로 먼저 보여 주고 그 자리에 들어감, 이음줄은 음표에서 음표로 끌기(또는 음표 선택 후 S), 휴대폰은 "누르고 위아래로 밀어 음높이 선택 → 떼면 입력", 화음, 4성부, 잇단음표, 꾸밈음, 붙임줄, 조옮김, 피아노 건반 입력 |
+| 악보 요소 | 가사(여러 절, 한글은 글자마다 자동 배치), 코드 기호 + 기타 코드 다이어그램, 드럼 보표(드럼 패드 입력), 기타 TAB, 셈여림·헤어핀, 아티큘레이션·꾸밈음, 템포, 리허설 마크, 도돌이표·1/2번 괄호·D.S./D.C./Coda, 줄/페이지 나눔, 머리 모양 |
+| 편의 | 포토샵식 묶음 버튼(마우스를 올리면 온음표~64분음표, 온쉼표~64분쉼표 등 종류 선택), 복사/잘라내기/붙여넣기, 선택 범위 끌어서 복사, 반복(R), 실행 취소/다시 실행, 상황별 옵션 바(Adobe 방식), 우클릭/길게 누르기 메뉴, 보기 방식 5가지(한 페이지·세로·가로·**여러 페이지 한눈에**·화면 맞춤), 페이지 썸네일, 재생+메트로놈, 자동 저장, 초보자용 간단 모드 |
+| 파일 | 전용 형식 `.ssnap`(원본 사진 포함), 내보내기 PDF · PNG · JPG · SVG · MusicXML · MXL · MIDI, 가져오기 **Finale(.musx)** · MusicXML/MXL |
+| 업데이트 | 인터넷 연결 시 자동 업데이트 후 "업데이트 완료" 표시 (웹·Windows·Android 모두) |
+| 디자인 | 리퀴드 글라스 UI, 다크 모드, 직접 그린 아이콘, Windows용 유리 버튼 창 조절(최소화·최대화·닫기) |
+
+## 바로 써 보기 (설치 없이)
+
+```bash
+cd app && python3 -m http.server 8080      # 또는: npx serve app
+# 브라우저에서 http://localhost:8080 접속
+```
+
+`app/` 폴더 자체가 완성된 웹앱입니다(빌드 단계 없음, 순수 JavaScript 모듈). `index.html`을 파일로 직접 여는 것은 브라우저 보안 때문에 동작하지 않으니 위처럼 로컬 서버로 여세요.
+
+## Windows 설치 파일(.exe)과 Android 앱(.apk) 만들기
+
+가장 쉬운 방법은 **GitHub에 올리고 태그만 붙이는 것**입니다 — exe·apk가 자동으로 만들어지고, 그 GitHub 주소가 자동 업데이트 서버 역할까지 합니다. 단계별 안내는 [RELEASING.md](RELEASING.md)를 보세요.
+
+PC에서 직접 빌드하려면:
+
+| 대상 | 필요한 것 | 명령 | 결과물 |
+|---|---|---|---|
+| Windows `.exe` | Windows PC, Node.js 20+ | `cd electron && npm install && npm run dist:win` | `electron/dist/JSE-Setup-<버전>.exe` |
+| Android `.apk` | Node.js 20+, JDK 17, Android Studio | `cd mobile && npm install && npm run sync` → Android Studio로 `mobile/android` 열기 → Build APK | `mobile/android/app/build/outputs/apk/…` |
+
+자세한 내용: [electron/README.md](electron/README.md), [mobile/README.md](mobile/README.md)
+
+## 폴더 구조
+
+```
+app/            웹앱 본체 (모든 플랫폼이 이 폴더를 그대로 사용)
+  js/model/     악보 데이터 모델, 편집 명령(실행 취소 지원)
+  js/engrave/   자체 악보 조판(렌더링) 엔진 → SVG
+  js/omr/       악보 인식 엔진 (Web Worker에서 실행)
+  js/io/        .ssnap · Finale(.musx) · MusicXML · MIDI · PDF/이미지 내보내기 · 자동 저장
+  js/ui/ js/view/ js/editor/   화면, 패널, 마우스·터치·키보드 편집
+electron/       Windows 설치 프로그램 (Electron + 자동 업데이트)
+mobile/         Android 앱 (Capacitor + 웹 번들 무선 업데이트)
+.github/        자동 빌드·릴리스·업데이트 배포
+tools/          테스트, 아이콘·글리프 생성, 인식 정확도 평가
+SPEC.md         기술 명세 (데이터 형식, 파일 형식, 업데이트 프로토콜)
+```
+
+## 테스트
+
+```bash
+node --test tools/tests/*.test.js          # 편집 명령 · MusicXML 왕복 · 가사 인식 테스트
+node tools/musx/check.mjs <폴더>           # Finale 파일 일괄 가져오기 점검
+node tools/omr/run_eval.mjs                # 악보 인식 정확도 평가 (합성 악보 120장)
+```
+
+## 알아 둘 점
+
+- **사진 인식 정확도**: 깨끗한 인쇄 악보(스캔·PDF)는 음높이 약 91%, 박자 약 93%를 맞힙니다. 휴대폰 사진(기울어짐·그림자·휨)은 아직 정확도가 낮아 검토·수정이 필요합니다. 인식 결과는 원본과 나란히 비교하며 고칠 수 있게 되어 있습니다.
+- 손으로 쓴 악보, 복잡한 오케스트라 총보는 인식 대상이 아닙니다.
+- 음악 기호 글꼴: GNU FreeSerif(GPLv3 + 글꼴 예외, `app/fonts/LICENSE-FreeFont.txt`). 라이브러리: JSZip, pdf-lib, pdf.js.

@@ -1,0 +1,138 @@
+name: Build Android APK
+
+# Builds mobile/android → JSE-<ver>.apk and, on a v* tag (called from
+# release.yml), attaches it to the GitHub Release.
+# Signing: secrets ANDROID_KEYSTORE_BASE64 + ANDROID_KEYSTORE_PASSWORD (optional ANDROID_KEY_ALIAS,
+# default "jse"; ANDROID_KEY_PASSWORD, default = keystore password).  Without them the APK is signed
+# with a debug key (installable, but a later release-signed APK will not install over it).
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+          log-accepted-android-sdk-licenses: false
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Read version
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./app/version.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Install Capacitor project dependencies
+        working-directory: mobile
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+      - name: Fill in update_base_url if still the placeholder
+        run: |
+          FILE=mobile/android/app/src/main/res/values/strings.xml
+          if grep -q 'REPLACE_GITHUB_OWNER' "$FILE"; then
+            sed -i "s#https://REPLACE_GITHUB_OWNER.github.io/jse/#https://${OWNER}.github.io/${REPO}/#g" "$FILE"
+            echo "::warning::update_base_url in strings.xml was the placeholder — using https://${OWNER}.github.io/${REPO}/ for this build (commit the change to silence this)"
+          fi
+          grep update_base_url "$FILE"
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+
+      - name: Generate launcher icons
+        working-directory: mobile
+        run: |
+          npm i --no-save sharp
+          node scripts/make-android-icons.mjs
+
+      - name: Copy web app + shim into www/ and sync the Android project
+        working-directory: mobile
+        run: npm run sync
+
+      - name: Gradle wrapper (generate when missing)
+        working-directory: mobile/android
+        run: |
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.7 --distribution-type bin --no-daemon
+          fi
+          chmod +x gradlew
+          ./gradlew --version
+
+      - name: Prepare release keystore
+        id: keystore
+        run: |
+          if [ -n "${ANDROID_KEYSTORE_BASE64}" ]; then
+            echo "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/release.keystore"
+            # Only the keystore + its password are required; the alias defaults to "jse" and the
+            # key password to the keystore password (keytool's PKCS12 default).
+            {
+              echo "KEYSTORE_PATH=${RUNNER_TEMP}/release.keystore"
+              echo "KEYSTORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}"
+              echo "KEY_ALIAS=${ANDROID_KEY_ALIAS:-jse}"
+              echo "KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            } >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Release keystore: provided"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set — the APK will be signed with a DEBUG key. Add the secrets described in RELEASING.md for a distributable build."
+          fi
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      - name: Build release APK
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Collect APK
+        id: apk
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          mkdir -p out
+          APK=$(find mobile/android/app/build/outputs/apk/release -name '*.apk' ! -name '*unsigned*' | head -n 1)
+          test -n "$APK" || { echo "::error::no APK produced"; exit 1; }
+          cp "$APK" "out/JSE-${VERSION}.apk"
+          ls -la out
+          echo "path=out/JSE-${VERSION}.apk" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JSE-android
+          path: out/*.apk
+          if-no-files-found: error
+
+      - name: Attach APK to the GitHub Release (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: out/JSE-${{ steps.meta.outputs.version }}.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JSE</string>
+    <string name="title_activity_main">악보</string>
+    <string name="package_name">kr.scoresnap.app</string>
+    <string name="custom_url_scheme">kr.scoresnap.app</string>
+    <string name="ssnap_file_label">JSE 악보</string>
+
+    <!-- OTA web-bundle updates (SPEC §7): the folder that contains version.json and web-x.y.z.zip.
+         GitHub Pages of the repository: https://<owner>.github.io/jse/   (trailing slash) -->
+    <string name="update_base_url" translatable="false">https://omokdie.github.io/jse/</string>
+</resources>

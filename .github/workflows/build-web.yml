@@ -1,0 +1,87 @@
+name: Web bundle & GitHub Pages
+
+# Publishes the web app (PWA) + OTA bundle + update manifest to GitHub Pages:
+#   https://<owner>.github.io/jse/               ← app/ is the site root
+#   https://<owner>.github.io/jse/web-<ver>.zip  ← Android OTA bundle
+#   https://<owner>.github.io/jse/version.json   ← update manifest (SPEC §7)
+# One-time setup: repository Settings → Pages → Source = "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Read version
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./app/version.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Web app version: $VERSION"
+
+      - name: Build site (app + Android shim + .nojekyll)
+        run: node mobile/scripts/sync-www.mjs --src app --out site --pages
+
+      - name: Create OTA bundle zip
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          test -f site/index.html || { echo "::error::app/index.html is missing"; exit 1; }
+          ( cd site && zip -r -X -q "../web-${VERSION}.zip" . -x '.nojekyll' )
+          mv "web-${VERSION}.zip" site/
+          ls -la "site/web-${VERSION}.zip"
+
+      - name: Write update manifest (site/version.json)
+        run: node .github/scripts/write-version-manifest.mjs --site site --zip "site/web-${{ steps.meta.outputs.version }}.zip" --repo "${{ github.repository }}"
+
+      - name: Keep the bundle as a workflow artifact too
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle-${{ steps.meta.outputs.version }}
+          path: |
+            site/web-${{ steps.meta.outputs.version }}.zip
+            site/version.json
+          retention-days: 30
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Summary
+        run: |
+          echo "### 배포 완료 — v${{ needs.build.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 웹 앱: ${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 업데이트 매니페스트: ${{ steps.deployment.outputs.page_url }}version.json" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#1e2430">
+<meta name="description" content="JSE — 악보 사진을 인식해 편집하고 PDF·이미지·MusicXML로 내보내는 악보 프로그램">
+<title>JSE</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app" class="app" aria-busy="true">
+  <header id="topbar" class="topbar"></header>
+  <div id="optionsbar" class="optionsbar" role="toolbar" aria-label="옵션"></div>
+  <div id="body" class="body">
+    <nav id="rail" class="rail" aria-label="도구"></nav>
+    <aside id="left" class="side left" aria-label="팔레트"></aside>
+    <main id="main" class="main">
+      <div id="canvas" class="canvas" tabindex="0" aria-label="악보"></div>
+      <div id="mini" class="mini-toolbar" hidden></div>
+      <div id="hint" class="hint-bar" hidden></div>
+    </main>
+    <aside id="right" class="side right" aria-label="속성"></aside>
+  </div>
+  <footer id="statusbar" class="statusbar"></footer>
+  <nav id="mobilebar" class="mobilebar" hidden></nav>
+  <div id="inputbar" class="inputbar" hidden></div>
+</div>
+<div id="layer" class="layer"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<noscript>JSE를 사용하려면 JavaScript를 켜 주세요.</noscript>
+<script src="vendor/jszip.min.js" defer></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
