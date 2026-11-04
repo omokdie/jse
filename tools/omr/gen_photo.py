@@ -41,6 +41,7 @@ SPLIT_SEEDS = {'eval': 9001, 'dev': 5001, 'train': 100001,
                'holdout3': 8101,    # round-3 frozen holdout (gen_finale_pages.mjs --keys tools/omr/holdout3.json)
                'holdout4': 8401,    # round-4 frozen holdout (gen_finale_pages.mjs --musicxml --keys tools/omr/holdout4.json)
                'holdout5': 8501,    # round-5 frozen holdout (gen_finale_pages.mjs --musicxml --keys tools/omr/holdout5.json)
+               'holdout6': 8601,    # round-6 frozen holdout (gen_finale_pages.mjs --musicxml --keys tools/omr/holdout6.json)
                'ftrain': 300001,    # real-music training photos
                'ftrain4': 400001,   # round-4 training photos (new seeds)
                'ftrain5': 500001}   # round-5 training photos

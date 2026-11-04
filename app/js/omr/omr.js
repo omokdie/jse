@@ -788,7 +788,7 @@ export function classify(ctx, staves, nolines, prims, options = {}) {
   const warnings = [];
   const symbols = [];
   ctx.nolines = nolines;
-  ctx.photoPipe = !options.legacyPreprocess;
+  ctx.photoPipe = !options.legacyPreprocess; ctx.dbgKW = options.dbgKW || null;
   glyphHook = ctx.models && ctx.models.glyphs ? makeGlyphHook(ctx, staves, ctx.models.glyphs, mlpPredict, nolines) : null;
   try { return classifyInner(ctx, staves, nolines, prims, options, warnings, symbols); } finally { glyphHook = null; }
 }
@@ -798,6 +798,16 @@ function classifyInner(ctx, staves, nolines, prims, options, warnings, symbols) 
   const { cc, heads, stems } = prims;
   // ---- headers (clef, key, time) per staff; defines where music starts -----
   for (const st of staves) detectHeader(ctx, st, cc, options, warnings);
+  // key signatures read from windows that the page vote does not confirm are undone: their x range
+  // holds the first notes then
+  if (staves.some(st => st.kwUndo)) {
+    const pk = voteKey(staves, ctx.sp / (ctx.scale || 1) <= 11)[0][0];
+    for (const st of staves) if (st.kwUndo && st.keyFifths !== pk) {
+      st.headerLabels.length = st.kwUndo.labels;
+      if (!st.timeSig) st.headerEnd = st.kwUndo.x + 0.4 * ctx.sp;
+      st.keyFifths = 0; st.keyConf = 0; st.keyWindows = false; st.kwUndo = null;
+    }
+  }
   // ---- barlines ------------------------------------------------------------
   const systems = [];
   for (const st of staves) { (systems[st.systemIndex] ||= { staves: [] }).staves.push(st); }
@@ -1305,8 +1315,14 @@ function detectHeader(ctx, st, cc, options, warnings) {
   if (!st.clef) { st.clef = 'treble'; st.clefMissing = true; }
   // key signature: run of accidental-sized components
   let sharps = 0, flats = 0, lastX = x;
-  if (glyphHook && glyphHook.probs) ({ sharps, flats, x } = readKeyLearned(ctx, st, inHeader, x));
-  else for (const c of inHeader) {
+  if (glyphHook && glyphHook.probs) {
+    ({ sharps, flats, x } = readKeyLearned(ctx, st, inHeader, x));
+    if (!sharps && !flats && ctx.photoPipe && ctx.nolines && options.keyWindows !== false) {
+      const undo = { x, labels: st.headerLabels.length };
+      const kw = readKeyWindows(ctx, st, inHeader, x);
+      if (kw) { ({ sharps, flats, x } = kw); st.kwUndo = undo; }
+    }
+  } else for (const c of inHeader) {
     if (c.x0 < lastX - 0.3 * sp) continue;
     if (c.x0 > lastX + 1.6 * sp) break;
     const hsp = c.h / sp, wsp = c.w / sp;
@@ -1359,6 +1375,88 @@ function detectHeader(ctx, st, cc, options, warnings) {
   }
   st.headerEnd = x + 0.4 * sp;
   void warnings;
+}
+
+// staff positions (half spaces below the top line) of the key-signature accidentals in the treble clef;
+// bass clef +2, alto clef +1
+const KEY_POS = { sharp: [0, 3, -1, 2, 5, 1, 4], flat: [4, 1, 5, 2, 6, 3, 7] };
+const KEY_CLEF_SHIFT = { treble: 0, bass: 2, alto: 1 };
+
+/** Photos: no key-signature accidental was found as a component — on blurred / low-resolution photos
+ * the accidentals merge with the clef or fall apart into pieces between the staff lines.  Windows at
+ * the places a key signature occupies (the clef's pitch pattern, evenly spaced after the clef) are
+ * classified from the grey image; the run of sharps or flats (first x, step) whose windows all read
+ * clearly as that accidental is taken. */
+function readKeyWindows(ctx, st, inHeader, x) {
+  const { sp, w } = ctx;
+  const shift = KEY_CLEF_SHIFT[st.clef];
+  if (shift == null || !glyphHook || !glyphHook.probs) return null;
+  // (a clef component much wider than any clef glyph holds the first accidentals: the scan starts
+  // inside it; no clef component: x is still the staff start, the clef glyph lies right of it)
+  const cb = st.clefBox, maxW = { treble: 3.15, bass: 3.35, alto: 3.4 }[st.clef] || 3.3;
+  const wide = cb && cb.w > maxW * sp;
+  const start = cb ? (wide ? cb.x0 + 2.0 * sp : x - 0.25 * sp) : x + 2.2 * sp;
+  const G = 0.2 * sp, nx = wide ? 14 : 9;        // first accidental within 1.6 sp (2.6 sp in a wide clef) of the start
+  const steps = [0.85, 0.95, 1.05, 1.15, 1.3, 1.45].map(v => v * sp);
+  const yAt = (xx, pos) => { const xi = clamp(rnd(xx), 0, w - 1); const t = st.lines[0][xi], b = st.lines[4][xi]; return t + pos * (b - t) / 8; };
+  const cache = new Map();
+  const prob = (type, i, xa) => {
+    const key = type + i + ':' + rnd(xa);
+    let p = cache.get(key);
+    if (p == null) {
+      const wt = (type === 'sharp' ? 1.0 : 0.85) * sp;
+      const xm = xa + wt / 2, yc = yAt(xm, KEY_POS[type][i] + shift);
+      // the tight ink box (line-free image) inside the window: the classifier sees the real extent
+      const wx0 = rnd(xa), wx1 = rnd(xa + wt);
+      const wy0 = rnd(yc - (type === 'sharp' ? 1.9 : 2.3) * sp), wy1 = rnd(yc + (type === 'sharp' ? 1.9 : 1.0) * sp);
+      let bx0 = Infinity, bx1 = -1, by0 = Infinity, by1 = -1;
+      if (wx0 >= 0 && wx1 < w && wy0 >= 0 && wy1 < ctx.h) for (let yy = wy0; yy <= wy1; yy++) for (let xx = wx0; xx <= wx1; xx++) if (ctx.nolines[yy * w + xx]) { if (xx < bx0) bx0 = xx; if (xx > bx1) bx1 = xx; if (yy < by0) by0 = yy; if (yy > by1) by1 = yy; }
+      if (bx1 < 0 || by1 - by0 + 1 < 1.4 * sp || bx1 - bx0 + 1 < 0.35 * sp) p = 0;
+      else {
+        const box = { x0: bx0, x1: bx1, y0: by0, y1: by1 };
+        // (the accidental's own extent must match its position: sharp centred, flat above)
+        const cy = (by0 + by1) / 2;
+        const ok = type === 'sharp' ? Math.abs(cy - yc) <= 0.6 * sp : (cy < yc + 0.1 * sp && cy > yc - 1.4 * sp);
+        const q = glyphHook.probs(box); p = ok && q[type] >= q.none ? q[type] : 0;
+      }
+      cache.set(key, p);
+    }
+    return p;
+  };
+  let best = null, bestAlt = null;
+  for (const type of ['sharp', 'flat']) {
+    for (let j = 0; j < nx; j++) {
+      const xs = start + j * G;
+      if (prob(type, 0, xs) < 0.6) continue;
+      for (const step of steps) {
+        let k = 0, sum = 0, min = 1;
+        for (let i = 0; i < 7; i++) {
+          // (window positions snapped to the 0.2 sp grid: shared by the hypotheses)
+          const xa = start + Math.round((xs - start + i * step) / G) * G;
+          const p = prob(type, i, xa);
+          if (p < 0.6) break;
+          k++; sum += p; min = Math.min(min, p);
+        }
+        if (!k) continue;
+        const mean = sum / k;
+        // (a single accidental after the clef is as often the first note's: a run of ≥ 2 is needed; a
+        // note head with an up-stem in a flat's window looks much like a flat: flats need a longer,
+        // very clear run)
+        // (inside a wide clef component the clef's own curl and dots can look like two sharps)
+        if (type === 'sharp' && !wide ? k < 2 || mean < 0.9 : k < 3 || mean < 0.97) continue;
+        const score = sum - 0.15 * k;
+        if (!best || score > best.score) { if (best && best.type !== type) bestAlt = best; best = { type, k, xs, step, mean, score }; }
+        else if (best.type !== type && (!bestAlt || score > bestAlt.score)) bestAlt = { type, k, xs, step, mean, score };
+      }
+    }
+  }
+  if (ctx.dbgKW) ctx.dbgKW.push({ st: st.index, clef: st.clef, best: best && { type: best.type, k: best.k, mean: +best.mean.toFixed(2), score: +best.score.toFixed(2), xs: +((best.xs - start) / sp).toFixed(1), step: +(best.step / sp).toFixed(2) }, alt: bestAlt && { type: bestAlt.type, k: bestAlt.k, mean: +bestAlt.mean.toFixed(2), score: +bestAlt.score.toFixed(2) } });
+  if (!best) return null;
+  const xEnd = best.xs + (best.k - 1) * best.step + (best.type === 'sharp' ? 1.0 : 0.85) * sp;
+  for (const c of inHeader) if (c.x0 >= start - 0.3 * sp && c.x1 <= xEnd + 0.3 * sp) st.headerLabels.push(c.id);
+  st.keyConf = best.mean * 0.9;
+  st.keyWindows = true;
+  return { sharps: best.type === 'sharp' ? best.k : 0, flats: best.type === 'flat' ? best.k : 0, x: xEnd + 0.2 * sp };
 }
 
 /** Key signature with the learned glyph classifier: a run of sharps or flats
@@ -1621,9 +1719,7 @@ export function assemble(ctx, staves, cls, image, options = {}) {
   if (options.keyFifths == null && !options.legacyPreprocess) {
     // the key signature is repeated on every staff: confidence-weighted vote over the page ("nothing
     // found" is a weak vote), explicit accidentals in the music break near ties
-    const w = {};
-    for (const st of staves) { const k = st.keyFifths || 0; w[k] = (w[k] || 0) + (k === 0 ? 0.35 : 0.4 + 0.6 * (st.keyConf || 0.5)); }
-    const ranked = Object.entries(w).map(([k, v]) => [+k, v]).sort((a, b) => b[1] - a[1]);
+    const ranked = voteKey(staves, ctx.sp / (ctx.scale || 1) <= 11);
     keyFifths = ranked[0][0];
     if (ranked.length > 1 && ranked[1][1] >= 0.7 * ranked[0][1]) {
       const score = (k) => accidentalEvidence(events, k);
@@ -1813,6 +1909,26 @@ function accidentalEvidence(events, k) {
     }
   }
   return sc;
+}
+
+/** Page key vote (photo pipeline): confidence-weighted over all staves, "nothing found" (0) is a weak
+ * vote.  On low-resolution photos (≤ 11 px staff space) the key signature is often not seen at all on
+ * most staves, so "nothing found" counts little there — but a key read on a single staff must be clear
+ * (≥ 3 confident accidentals: one or two accidentals after the clef are often the first notes'). */
+function voteKey(staves, lowRes) {
+  const nk = {}, ck = {};
+  for (const st of staves) { const k = st.keyFifths || 0; nk[k] = (nk[k] || 0) + 1; ck[k] = Math.max(ck[k] || 0, st.keyConf || 0); }
+  const vote = (zeroW, ok) => {
+    const w = {};
+    for (const st of staves) { const k = st.keyFifths || 0; if (ok(k)) w[k] = (w[k] || 0) + (k === 0 ? zeroW : 0.4 + 0.6 * (st.keyConf || 0.5)); }
+    return Object.entries(w).map(([k, v]) => [+k, v]).sort((a, b) => b[1] - a[1]);
+  };
+  let ranked = vote(0.35, () => true);
+  if (lowRes && ranked.length && ranked[0][0] === 0) {
+    const r2 = vote(0.12, (k) => k === 0 || nk[k] >= 2 || (Math.abs(k) >= 3 && ck[k] >= 0.8));
+    if (r2.length && r2[0][0] !== 0) ranked = r2;
+  }
+  return ranked.length ? ranked : [[0, 0]];
 }
 
 /** The converse: two neighbouring measures of one system that are both clearly

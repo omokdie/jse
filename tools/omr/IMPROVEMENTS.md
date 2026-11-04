@@ -1,5 +1,134 @@
 # OMR photo-accuracy work
 
+## Round 6 (after v1.0.7, last round): new holdout6, key signatures on photos
+
+Round 6 is the last training round. See "Where to continue" at the end of this file.
+
+### Results (`node tools/omr/stage_eval.mjs --dir tools/omr/corpus/<split>`; pitch / duration / exact measure count)
+
+| split | v1.0.7 | after | notes |
+|---|---|---|---|
+| **holdout6_photo** (128 photos, frozen: music never used before, from 2 new corpora, + 3 never-used fonts) | 88.0 / 87.1 / 71.1 % | **88.3 / 87.1 / 71.1 %** | evaluated once, code frozen |
+| — scan (25) / flat (46) | 95.5/95.0/72.0 · 93.5/93.4/80.4 | 95.5/95.0/72.0 · 93.5/93.4/80.4 | |
+| — curl (32) / hard (25) | 90.9/90.0/71.9 · 66.4/63.9/52.0 | 90.9/90.0/71.9 · **68.2**/63.9/52.0 | hard page key 68 → 72 % |
+| — per stage | clef 96.6, page key 89.8, time 73.7, barline R/P 89.9/99.6, heads R 94.5, acc R/P 65.1/97.2 | 96.6, **90.6**, 73.7, 89.9/99.6, 94.5, 65.1/97.5 | |
+| — part A (music21 corpus + Lecuona, 80) / part B (OpenScore Lieder, 48) | 91.2/88.5/70.0 · 82.0/84.7/72.9 | 91.2/88.5/70.0 · **83.1**/84.7/72.9 | piano (14) 70.3/77.5/50.0, single staff 91.1 → 91.5 |
+| — never-used fonts: Eugene / Punzón / Legato (12 each) | 88.1/83.0 · 91.0/81.3 · 90.2/93.2 | unchanged | pitch / duration |
+| holdout6_pages (64 clean pages) | 95.6 / 96.1 / 81.3 | **95.6 / 96.1 / 81.3** | time signature 74.1 → 75.9 % |
+| holdout5_photo (80, dev this round) | 77.3 / 80.9 / 66.3 | **77.6 / 81.0 / 66.3** | hard 44.8 → 46.5; Leland 40.9 → 44.2 |
+| holdout5_pages (40) | 92.6 / 91.6 / 82.5 | **92.7 / 91.6 / 82.5** | |
+| holdout4_photo (80, dev) | 83.6 / 88.9 / 81.3 | **86.8 / 88.9 / 81.3** | page key 86.3 → 95.0 % (Petaluma scans / flat / curl +25…37 notes each) |
+| holdout4_pages (40) | 92.1 / 97.2 / 87.5 | **92.8 / 97.2 / 87.5** | |
+| holdout3_photo (82) / holdout3_pages (41) | 80.2/84.9/80.5 · 93.2/96.0/87.8 | **80.3**/84.9/80.5 · 93.2/96.0/87.8 | page key 90.2 → 92.7 % |
+| fresh_photo (56) | 84.5 / 89.2 / 67.9 | **86.1 / 89.2 / 67.9** | page key 83.9 → 87.5 % |
+| eval_photo (60) | 87.7 / 86.1 / 55.0 | **88.3 / 86.1 / 53.3** | one photo: 43 → 42 measures, +46 notes right |
+| eval_clean (60) / base (40) / aug (80) | 97.5/97.7/83.3 · 98.1/97.6/95.0 · 92.7/93.7/77.5 | unchanged | |
+
+No photo or page of any dev split lost more than one note (pitch or duration) against v1.0.7, and clean pages show no regression. The 90 % target is
+**not reached**: holdout6 photos 88.3 % pitch, 87.1 % duration, with scans at 95.5 % and hard photos at 68 %. holdout6
+is easier than holdout5: 33 of its 64 pages are in C, and part A is early music with few accidentals. The same code
+reads 77.6 % on holdout5 photos (chromatic Lieder and quartets).
+
+Timing (Node, 2 evaluations in parallel, lyrics off): 2.40 s per holdout6 photo (v1.0.7 2.53 s) and 2.85 s per
+holdout5 photo (2.95 s). Chromium in the app worker, through the UI scan flow incl. the lyric stage, fresh browser per
+run, same machine and photo for both versions: 6.96 s for a curled photo (holdout4 013; v1.0.7 6.93 s; key now E major
+instead of C) and 3.4 s for a hard piano photo (v1.0.7 3.9 s). No console errors. Shipped weights are unchanged at
+294 KB (glyphs 87, rhythm 87, heads 60, bars 59). 27/27 tests pass.
+
+### holdout6 (built and frozen before any change)
+
+* **Part A, two corpora never used before** (pages 000–039, `--seed 83`). From the **music21 corpus** (mirror
+  `github.com/muscorpus-corpora/music21_corpus`; `cuthbertLab/music21` was not reachable): Monteverdi madrigals
+  (books 3–5), Trecento mass movements and motets (PMFC 6/12/13/23/24, incl. Ciconia), Zacara da Teramo (`luca`),
+  Corelli op. 3/1, C. P. E. Bach H186 and Weber's clarinet concertino. The music is public domain. The encodings are
+  distributed with the encoders' permission, some for non-commercial use only, so they are used here for evaluation
+  only and nothing is shipped. Also from **bonillamusic/LecuonaXML** and **GraingerXML** (CC0). None of these composers
+  occurs in the Finale corpus, When-in-Rome, OpenScore Lieder or the String Quartets, checked by name. The music21
+  corpus's Schoenberg, Verdi, Debussy, Handel, Bach, Haydn, Mozart, Beethoven, Schumann, Schubert, Joplin and Beach
+  were excluded for that reason. 36 Monteverdi and 27 Trecento files are UTF-16 and were converted (the app's importer
+  reads UTF-8). The page generator accepted 40 pages: Trecento 20, Monteverdi 17, C. P. E. Bach, Zacara and Lecuona's
+  "Siboney" (voice).
+* **Part B** (pages 100–123, `--seed 89`): 24 OpenScore Lieder songs from 187 songs by the 37 Lieder composers that are
+  in no earlier set. They are not in the Finale corpus or When-in-Rome, and they are not holdout5's composers. Round 5
+  trained nothing on them. It has 6 piano pages and keys from −6 to +4.
+* **Three fonts never used before**, all SIL OFL: Eugene (`mikkopatama/eugenefont`), Punzón (`mikkopatama/punzonfont`)
+  and Legato (`eNote-GmbH/Legato`), 6 pages each. The other pages use 9 known fonts.
+* `tools/omr/holdout6.json` holds the 262 generator files (`files`) and 84 `reserved` files of the same collections;
+  none may be used for training. MusicXML is in `/tmp/r6music/h6`, extracted by `/tmp/r6work/scripts/extract_h6.py` and
+  `extract_h6b.py`.
+* `corpus/holdout6_pages` has 64 pages (7 piano, 4,281 notes, 1,551 measures). `corpus/holdout6_photo` has 128 photos
+  (`gen_photo.py --split holdout6`, seed 8601): 25 scan, 46 flat, 32 curl and 25 hard. sha1 of the folder listings:
+  photo `bcd55c29…`, pages `36007654…`; content hashes are in `/tmp/omrw/r6_holdout6_freeze.txt`.
+
+```sh
+python3 tools/omr/smufl_glyphs.py --font /tmp/r6src/mikkopatama_eugenefont/Eugene.otf --out /tmp/omr_fonts/eugene.json   # + Punzon.otf → punzon, Legato.otf → legato
+node tools/omr/gen_finale_pages.mjs --musicxml --src /tmp/r6music/h6 --keys <part-A file list> --count 40 --per-folder 2 --fonts eugene,punzon,legato,finalebroadway,bravura,leland,petaluma,leipzig,sebastian,finalemaestro,freeserif,mscore --out /tmp/r6work/h6pages --seed 83
+node tools/omr/gen_finale_pages.mjs --musicxml --src /tmp/r6music/h6 --keys <part-B file list (OSL6__*)> --count 24 --per-folder 2 --fonts legato,eugene,punzon,mscore,finalemaestro,freeserif,sebastian,leipzig,petaluma,leland,bravura,finalebroadway --out /tmp/r6work/h6pagesB --seed 89   # pages renumbered 100–123
+python3 tools/omr/gen_photo.py --pages tools/omr/corpus/holdout6_pages --split holdout6 --start 0 --count 32 --per-page 2 --out /tmp/omrw/r6h6   # + --start 32 --count 32 → corpus/holdout6_photo
+```
+
+**What was run on holdout6, and when** (KST, 2026-11-04; log `/tmp/omrw/r6_holdout6_log.txt`):
+
+* 08:52–08:58: the v1.0.7 baseline (`git archive HEAD app tools` → /tmp/v107) on holdout6_pages and _photo. Not opened
+  until the end.
+* 08:54–08:56: an interim build (the key-vote change only) on holdout6_pages, started too early by mistake. It was
+  deleted unopened at 08:57.
+* 09:43: code frozen (md5 list `/tmp/omrw/r6_final_code_md5.txt`). 09:56–10:02: the final code on holdout6_pages and
+  _photo. 10:03: both results opened for the first time.
+* No change was made after that.
+
+### Changes (dev: holdout5 (now dev), holdout4, holdout3, fresh, eval_photo; clean sets checked)
+
+1. **Key signature from windows** (`readKeyWindows`, photo pipeline). It runs when no key accidental was found as a
+   component: blurred accidentals merge with the clef or fall apart into pieces between the staff lines, and Petaluma's
+   wide sharps form one blob. Windows are placed where a key signature sits: the clef's pitch pattern (treble sharps
+   F C G D A E B at half-space positions 0, 3, −1, 2, 5, 1, 4 below the top line, flats 4, 1, 5, 2, 6, 3, 7; bass +2,
+   alto +1), evenly spaced at 0.85–1.45 sp after the clef. The tight ink box (line-free image) in each window is
+   classified by the glyph model. A sharp counts only if its box is centred on its position; a flat's box must lie
+   above it. A run is accepted at ≥ 2 sharps with mean p ≥ 0.9, or ≥ 3 flats with p ≥ 0.97 (a note head with an up-stem
+   in a flat's window looks like a flat). A clef component much wider than any clef glyph (Petaluma's alto clef with 3
+   sharps was one 5.9 sp component) is scanned from inside, and there ≥ 3 at p ≥ 0.97 are needed (the bass clef's curl
+   and dots read as 2 sharps). Fixed boxes were tried first: false flats at p 0.86–1.0 on key-0 and sharp-key pages.
+2. **Unconfirmed window keys are undone**. After all staff headers, a provisional page key vote runs. A staff whose
+   window reading disagrees with it gets back its header end and its components, which then hold the first notes.
+3. **Page key vote** (`voteKey`). On low-resolution photos (≤ 11 px staff space) a key signature is often missed on
+   most staves, so "nothing found" counts 0.12 there instead of 0.35. A key read on a single staff is accepted only if it
+   is clear: ≥ 3 accidentals with confidence ≥ 0.8. One or two accidentals after the clef are often the first notes'.
+   A 2-flat reading on 1 of 5 staves of a key-0 page had cost 36 notes on eval_photo before this limit. Hard photos of
+   holdout3/4/5 gain +0.7 to +1.2 pitch points from this alone. With changes 1–2 the hard photos go from
+   44.8 → 46.5 (holdout5), 61.7 → 64.7 (holdout4) and 47.4 → 48.1 (holdout3).
+
+Tried, not kept:
+* A lower threshold for accidental windows on low-resolution photos (0.92 → 0.8): no change, because the windows are
+  rejected before classification.
+* Accidental windows without long vertical and horizontal runs. These are accidentals joined to stems, beams or slurs
+  of beamed groups: 19 % of the in-measure accidentals on 14 flat holdout5 photos sit in a head's component. Recall
+  rose 60.7 → 62.5 % but precision fell 97.0 → 92.8 % (94.4 % at p ≥ 0.985), and pitch did not move.
+
+No model was retrained.
+
+### What blocks 90 % now (holdout6 photos: 1,000 of 8,562 notes with a wrong pitch)
+
+1. **Hard / low-resolution photos**: 53 % of the lost notes (532), at 68 % pitch and 64 % duration. Their page key is
+   72 % (215 lost), and in 5 photos fewer than 85 % of the heads are found (161 lost). Clefs are 86 % (126 lost), and
+   one hard photo kept the original pipeline with 0/7 clefs
+   and 1/36 barlines (`057_117_single_freeserif1_hard`). On dev hard photos the wrong clefs were mostly alto clefs and
+   grand staves that were not paired. Accidentals are 20 % on hard photos. The models see these photos only after
+   upsampling to 12 px.
+2. **Piano photos**: 70 % pitch (14 photos). Barlines through the grand staff are missed on curled and hard photos
+   (0/5, 0/7 on the worst), and the measures then misalign.
+3. **Accidentals inside measures** on flat and curl photos (flat other 167 + curl other 103 lost). Recall is 65 %
+   (holdout5 48 %); 19 % of them are merged into a beamed group's component.
+4. Rhythm: duration 87 %, exact measure count 71 %, barline recall 90 %, and 74 % of time signatures read (50 % on
+   hard photos).
+
+### Files (round 6)
+
+`app/js/omr/omr.js` (`readKeyWindows`, undo of unconfirmed window keys after the headers, `voteKey`); tools:
+`gen_photo.py` (split `holdout6`), `tools/omr/holdout6.json`, `tools/e2e/omr_scan.js` (timed scan-dialog check);
+corpora `corpus/holdout6_pages`, `corpus/holdout6_photo` (git-ignored). Results are in `/tmp/omrw/r6_final_*.json`
+(final code) and `r6_base107_holdout6_*.json` (v1.0.7). Dev checkpoints are `r6_k1…k6_*.json`.
+
 ## Round 5 (after v1.0.6): grand staves on photos, stems / dots / full-bar rests, key signatures
 
 ### Results (`node tools/omr/stage_eval.mjs --dir tools/omr/corpus/<split>`; pitch / duration / exact measure count)
@@ -636,3 +765,98 @@ node tools/omr/stage_eval.mjs --dir tools/omr/corpus/base
 OMR_OPTS='{"pipeline":"photo"}' node tools/omr/stage_eval.mjs --dir tools/omr/corpus/dev_photo
 node tools/omr/run_eval.mjs --dir tools/omr/corpus/eval_photo        # original report format
 ```
+
+## Where to continue (state after round 6, the last round)
+
+Training stopped after round 6. The code is in the working tree after v1.0.7 and is not committed by the agents.
+
+### State of the art (final round-6 code; pitch / duration %)
+
+| photo type | holdout6 (unseen, evaluated once) | holdout5 (dev; chromatic Lieder / quartets) | holdout4 (dev) |
+|---|---|---|---|
+| scan | 95.5 / 95.0 | 92.9 / 92.3 | 94.3 / 96.1 |
+| flat photo | 93.5 / 93.4 | 84.7 / 87.0 | 92.0 / 94.5 |
+| curled page | 90.9 / 90.0 | 79.7 / 82.2 | 94.0 / 96.6 |
+| hard / low-res (6.5–10 px staff space, JPEG) | 68.2 / 63.9 | 46.5 / 57.6 | 64.7 / 65.6 |
+| all photos | **88.3 / 87.1** (exact measure count 71 %) | 77.6 / 81.0 (66 %) | 86.8 / 88.9 (81 %) |
+| clean pages | 95.6 / 96.1 | 92.7 / 91.6 | 92.8 / 97.2 |
+
+Scans and flat photos of ordinary music are at or above 90 % pitch. Hard photos, piano photos and chromatic music are
+not.
+
+### Top blockers (evidence: holdout6 photos, 1,000 of 8,562 notes with a wrong pitch; `cause.py`-style split by the first failing stage)
+
+1. **Hard / low-resolution photos: 53 % of the lost notes.**
+   * Page key 72 % (215 lost notes; often no accidental is found on any staff).
+   * Fewer than 85 % of the heads found on 5 photos (161 lost; staves and barlines missed too).
+   * Clefs 86 % (126 lost; alto clefs, unpaired grand staves).
+   * Accidentals 20 %.
+   * Auto mode once kept the original pipeline with 0/7 clefs (`057_117_single_freeserif1_hard`).
+
+   Idea: a native low-resolution path. Train the glyph / head models on samples cut at 6–10 px staff space, without
+   upsampling; train a key-window classifier on GT key-signature windows (positives) and shifted windows (negatives);
+   check auto mode against clef plausibility.
+2. **Accidentals inside measures: recall 65 % (holdout5 48 %), precision 97 %.** On 14 flat holdout5 photos 19 % of
+   them are in the same connected component as a head of a beamed group (stem / beam / slur contact). Simple
+   stripping of long runs did not help (round 6, "tried"). They need a segmentation that knows the group's stems and
+   beams, or a classifier for GT-box crops in beamed groups.
+3. **Piano photos: 70 % pitch** on holdout6 (14 photos). Barlines through the grand staff are missed on curled and hard
+   photos (0/5 and 0/7 on the worst), and the measures misalign. Dev hard piano photos also lose their grand-staff
+   pairing.
+4. **Rhythm / measures:** duration 87 %, exact measure count 71 %, time signature read on 74 % of the photos (50 % hard),
+   barline recall 90 %. Remaining errors are 16th / 32nd vs eighth confusions and tuplets.
+
+### Which holdout is still clean
+
+**None.** holdout6 was evaluated once at the end of round 6, so it becomes a dev set like holdout3–5. The `reserved`
+files in `holdout6.json` belong to the same collections, so they are not an independent test.
+
+Never used anywhere, for a holdout7:
+* OpenScore String Quartets composers with FNV-1a(folder) % 2 == 1. Round 5 used only the other half. The clone is in
+  `/tmp/r4fonts/OpenScore_StringQuartets`.
+* SMuFL fonts never used: Golden Age (`benwiggy/GoldenAge`), Bettenhoven and Skye (`JohnG0070/…`), and the
+  Finale Ash / Jazz / Legacy / Engraver / Copyist / Petrucci fonts (`bencarp/finale-fonts`). Check each licence.
+
+Build and freeze the holdout before changing anything, as rounds 3–6 did.
+
+### Commands
+
+```sh
+# --- fonts → engraver glyph tables (generator only; repos cloned into /tmp, SIL OFL) ---
+git clone --depth 1 https://github.com/steinbergmedia/bravura /tmp/fonts/bravura        # also steinbergmedia/petaluma, MuseScoreFonts/Leland,
+#   rism-digital/leipzig, fkretlow/sebastian, tr-igem/ekmelos, musescore/MuseScore (sparse: fonts → finalemaestro, finalebroadway,
+#   gootville, mscore, musejazz), mikkopatama/eugenefont, mikkopatama/punzonfont, eNote-GmbH/Legato
+python3 tools/omr/smufl_glyphs.py --font <font.otf> --out /tmp/omr_fonts/<name>.json
+# --- music sources ---
+#   Finale corpus: /home/claude/enigma-cache (EnigmaXML of the user's 1,373 Finale files)
+#   When-in-Rome / OpenScore Lieder / String Quartets: see rounds 4–5 (sparse clones, MusicXML extracted to /tmp/r4music, /tmp/r5music)
+#   holdout6: music21 corpus mirror (github.com/muscorpus-corpora/music21_corpus), bonillamusic/LecuonaXML + GraingerXML → /tmp/r6music/h6
+#   (scripts /tmp/r6work/scripts/extract_h6.py, extract_h6b.py; UTF-16 files converted)
+# --- clean pages (real music, engraved by the app) and photos with exact ground truth ---
+node tools/omr/gen_finale_pages.mjs [--musicxml --src DIR] --keys tools/omr/holdoutN.json --count N --per-folder 2 --fonts a,b,… --out DIR --seed S
+python3 tools/omr/gen_photo.py --pages DIR --split holdoutN --count N --per-page 2 --out OUT   # → OUT/holdoutN_photo; exact commands per holdout in rounds 3–6
+python3 tools/omr/gen_photo.py --split eval --count 60          # synthetic eval_clean / eval_photo (dev: --split dev --count 40)
+python3 tools/omr/gen_synthetic.py --out tools/omr/corpus --count 40 --seed 1 ; python3 tools/omr/augment.py   # legacy base / aug
+# --- training data (never from a holdout: gen_finale_pages.mjs --exclude tools/omr/holdoutN.json) and models ---
+python3 tools/omr/gen_photo.py --pages TRAIN_PAGES --split ftrain5 --count N --fast --kinds hard,flat,curl,hard,scan,flat,hard,curl --out /tmp/trp
+node tools/omr/extract_glyphs.mjs --dir /tmp/trp/ftrain5_photo --out /tmp/g --heads-out /tmp/h --rhythm-out /tmp/r --bars-out /tmp/b   # --shard k/n
+python3 tools/omr/train_glyphs.py --data /tmp/g,… --epochs 30 --hidden 128,64      # → app/js/omr/models/glyphs.js
+python3 tools/omr/train_heads.py  --data /tmp/h,… --epochs 16                      # → models/heads.js (subsample: 7 GB RAM)
+python3 tools/omr/train_rhythm.py --data /tmp/r,… --epochs 30                      # → models/rhythm.js
+python3 tools/omr/train_rhythm.py --kind bars --data /tmp/b,… --epochs 30 --hidden 64,32   # → models/bars.js
+OMR_MODELS=/tmp/newmodels node tools/omr/stage_eval.mjs --dir tools/omr/corpus/holdout5_photo   # A/B a model directory
+OMR_OPTS='{"keyWindows":false}' node tools/omr/stage_eval.mjs --dir …                          # A/B an option (round 6 key windows off)
+# --- every evaluation (≈ 25 min on 2 cores; run 2 lists in parallel) ---
+for s in holdout6_photo holdout6_pages holdout5_photo holdout5_pages holdout4_photo holdout4_pages holdout3_photo holdout3_pages \
+         fresh_photo eval_photo eval_clean base aug; do
+  node tools/omr/stage_eval.mjs --dir tools/omr/corpus/$s --json /tmp/omrw/X_$s.json > /tmp/omrw/X_$s.txt; done
+git archive HEAD app tools | tar -x -C /tmp/v107 && (cd /tmp/v107 && node tools/omr/stage_eval.mjs --dir /home/claude/scoresnap/tools/omr/corpus/<split> --json …)   # baseline of a release
+node --test tools/tests/*.test.js                                           # 27 tests
+python3 -m http.server 8765 -d app &                                        # browser worker, real scan dialog (timing + result)
+OMR_IMG=/abs/photo.jpg node tools/e2e/shot.mjs http://localhost:8765/ /tmp/omr-scan.png desktop tools/e2e/omr_scan.js
+```
+
+The corpora live in `tools/omr/corpus/` (git-ignored). Fonts, music clones and training samples live in /tmp and must
+be regenerated after a machine reset. Rounds 5–6 results are in `/tmp/omrw/r5_*.json` and `r6_*.json`; per image, the
+field `perImage` holds stage counts. Diagnostic options: `keyWindows` (false = off) and `dbgKW` (an array that collects
+the window-reader decisions).
