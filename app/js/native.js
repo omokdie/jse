@@ -27,6 +27,42 @@ export function isMobileLayout() { return document.documentElement.classList.con
 export function isTabletLayout() { return document.documentElement.classList.contains('tablet'); }
 export function isTouch() { return window.matchMedia('(pointer: coarse)').matches; }
 
+// ---- "back one level" stack: full-screen pages (settings) register a handler; the browser Back button,
+//      the Android back gesture and the Android app's back key all pop the top one.
+const backStack = [];
+let backSilent = 0, backBound = false;
+// The desktop shell has no back button, and its main process watches page loads — keep its history untouched.
+function backUsesHistory() { return typeof history !== 'undefined' && typeof window !== 'undefined' && !globalThis.JSE_PREVIEW && !native()?.windowControls; }
+function bindBackStack() {
+  if (backBound) return; backBound = true;
+  window.addEventListener('popstate', () => {
+    if (backSilent > 0) { backSilent--; return; }      // our own history.go() after a level was closed from the UI
+    const top = backStack.pop();
+    if (top) { top.hist = false; try { top.onBack(); } catch (e) { console.error(e); } }
+  });
+}
+/** Register `onBack` as the newest level. Returns { release() } — call it when the level is closed from the UI. */
+export function pushBack(onBack) {
+  const entry = { onBack, hist: false };
+  backStack.push(entry);
+  if (backUsesHistory()) { try { history.pushState({ jseBack: backStack.length }, ''); entry.hist = true; bindBackStack(); } catch { /* sandboxed page */ } }
+  return {
+    release() {
+      const i = backStack.indexOf(entry); if (i < 0) return;
+      const n = backStack.splice(i).filter(e => e.hist).length;   // this level and everything opened above it
+      if (n) { backSilent++; try { history.go(-n); } catch { backSilent--; } }
+    },
+  };
+}
+/** Go back one level (Android back key). False when nothing is registered. */
+export function goBack() {
+  const top = backStack[backStack.length - 1]; if (!top) return false;
+  if (top.hist) { try { history.back(); return true; } catch { /* fall through */ } }
+  backStack.pop(); try { top.onBack(); } catch (e) { console.error(e); }
+  return true;
+}
+export function backDepth() { return backStack.length; }
+
 export async function blobToBase64(blob) {
   const buf = await blob.arrayBuffer(); const bytes = new Uint8Array(buf); let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -59,16 +95,26 @@ export async function saveBlob(blob, name, { mime = blob.type, suggestDialog = t
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
   return { download: true };
 }
+/** What a file picker may be asked to filter by. Android pickers filter by MIME type only: an extension Android has no
+ *  MIME type for (.ssnap, .mscz, .nwc, .musx …) is dropped from the filter and such files can then not be chosen at all.
+ *  So on Android a list holding any such extension asks for every file — a file is recognised by its content anyway. */
+const ANDROID_KNOWN_ACCEPT = /^(?:(?:image|audio|video)\/[\w.+*-]+|application\/(?:pdf|json)|\.(?:pdf|json|png|jpe?g|webp|gif|bmp|mp3|m4a|aac|wav|ogg|oga|opus|flac|webm|mp4|aif|aiff))$/i;
+export function pickerAccept(accept, android = /Android/i.test(globalThis.navigator?.userAgent || '')) {
+  const list = String(accept || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!android) return list.join(',');
+  return list.every(a => ANDROID_KNOWN_ACCEPT.test(a)) ? list.join(',') : '';
+}
 /** Pick files: returns [{name, blob, handle?}]. */
 export async function pickFiles({ accept = '.ssnap,.musx,.ftmx,.musicxml,.xml,.mxl,image/*', multiple = false, capture = null } = {}) {
   const n = native();
+  const filter = pickerAccept(accept);
   if (n?.openFileDialog && !capture && !accept.includes('image')) {
-    const r = await n.openFileDialog({ accept: accept.split(',') });
+    const r = await n.openFileDialog({ accept: filter ? filter.split(',') : [] });
     if (!r) return [];
     return [{ name: r.name, blob: new Blob([base64ToBytes(r.base64)], { type: r.mime || 'application/octet-stream' }) }];
   }
   return new Promise(resolve => {
-    const input = document.createElement('input'); input.type = 'file'; input.accept = accept; input.multiple = multiple;
+    const input = document.createElement('input'); input.type = 'file'; if (filter) input.accept = filter; input.multiple = multiple;
     if (capture) input.capture = capture;
     input.style.position = 'fixed'; input.style.left = '-9999px'; document.body.appendChild(input);
     let done = false;

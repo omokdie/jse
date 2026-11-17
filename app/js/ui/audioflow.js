@@ -190,6 +190,12 @@ export async function audioDialog(app, ui, { files = null } = {}) {
     ],
     onOpen: (r) => {
       root = r;
+      { // 설정 › 인식 › 음원 인식 기본값
+        const st = app.settings || {};
+        if (['melody', 'piano'].includes(st.audioMode)) r.querySelector('#au-mode').value = st.audioMode;
+        r.querySelector('#au-trip').checked = st.audioTriplets === true;
+        r.querySelector('#au-chords').checked = st.audioChords !== false;
+      }
       root.querySelector('.dialog')?.classList.add('audio-dialog');
       const fb = root.querySelectorAll('footer button');
       ['close', 'more', 'append', 'run', 'apply'].forEach((k, i) => { fb[i].dataset.b = k; });
@@ -229,6 +235,7 @@ export async function audioDialog(app, ui, { files = null } = {}) {
     ui.toast(`음원 악보 ${score.measures.length}마디를 뒤에 붙였습니다`, 'ok');
   } else {
     if (!(await ui.confirmDiscard())) return;
+    app.applyNewScoreDefaults?.(score);   // paper, margins, staff size, fonts from 설정 › 새 악보 기본값
     app.setScore(score, { fileName: null, dirty: true });
     ui.view.fit('width');
     ui.toast('음원에서 악보를 만들었습니다 — 재생해 보며 고쳐 보세요', 'ok', { timeout: 4500 });

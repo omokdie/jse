@@ -1,0 +1,94 @@
+// The Windows-app page, with a stand-in for the Electron shell
+// (INIT=tools/settings/init-electron.js defines window.ScoreSnapNative before the app boots). Desktop profile.
+const OUT = '/home/claude/scoresnap/tools/out/';
+page.setDefaultTimeout(10000);
+const fails = []; let passed = 0;
+const ok = (cond, msg) => { if (cond) passed++; else { fails.push(msg); console.log('  FAIL: ' + msg); } };
+const wait = ms => page.waitForTimeout(ms);
+const row = id => `.st-row[data-id="${id}"]`;
+const calls = name => page.evaluate(n => window.__native.calls.filter(c => c[0] === n).map(c => c[1]), name);
+const st = () => page.evaluate(() => JSON.parse(JSON.stringify(window.JSE.app.settings)));
+const statusOf = id => page.$eval(`${row(id)} .st-status`, e => e.textContent).catch(() => '');
+const open = async sec => { await page.evaluate(s => window.JSE.ui.settings(s), sec); await wait(250); };
+const close = async () => { await page.evaluate(() => document.querySelector('.st-x')?.click()); await wait(150); };
+const closed = () => page.evaluate(() => window.__native.closed);
+
+ok(JSON.stringify(await calls('setAppSettings')) === JSON.stringify([{ rememberBounds: true, startMaximized: false, disableGpu: false, defaultDir: '' }]), 'desktop options are mirrored to the shell once at start-up: ' + JSON.stringify(await calls('setAppSettings')));
+ok(await page.evaluate(() => typeof window.__native.closeReq === 'function'), 'the app asked to be consulted before the window closes');
+ok(JSON.stringify(await calls('setZoomFactor')) === '[1]', 'zoom factor set at start-up');
+const h0 = await page.evaluate(() => history.length);
+await open('windows');
+ok(await page.evaluate(() => history.length) === h0, 'no history entries inside the desktop shell');
+const secs = await page.$$eval('.st-cat', els => els.map(e => e.dataset.sec + ':' + e.textContent.trim()));
+ok(secs.some(s => s.startsWith('windows:Windows 앱')) && !secs.some(s => s.startsWith('web:') || s.startsWith('android:')), 'Windows page shown, web / Android pages hidden');
+const ids = await page.$$eval('.st-row', els => els.map(e => e.dataset.id));
+ok(ids.join() === 'winRememberBounds,winStartMaximized,winCloseConfirm,winDisableGpu,winRestart,keepScreenOn,winDefaultDir,winFileAssoc,winSettingsFile', 'rows: ' + ids.join());
+await page.screenshot({ path: OUT + 'st-windows-page.png' });
+await page.click(`${row('winStartMaximized')} .st-switch`); await wait(200);
+ok((await calls('setAppSettings')).at(-1).startMaximized === true, 'start maximised → shell');
+await page.click(`${row('winRememberBounds')} .st-switch`); await wait(200);
+ok((await calls('setAppSettings')).at(-1).rememberBounds === false, 'remember window size off → shell');
+await page.click(`${row('winDisableGpu')} .st-switch`); await wait(250);
+ok((await calls('setAppSettings')).at(-1).disableGpu === true, 'hardware acceleration off → shell');
+ok(await page.evaluate(() => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('다시 시작하면 적용') && t.querySelector('button'))), 'restart notice with a button');
+await page.evaluate(() => [...document.querySelectorAll('.toast button')].find(b => b.textContent === '지금 다시 시작').click()); await wait(300);
+ok((await calls('relaunch')).length === 1, 'restart now → relaunch');
+await page.click(`${row('winRestart')} [data-act=restart]`); await wait(300);
+ok((await calls('relaunch')).length === 2, 'the restart row relaunches too');
+await page.click(`${row('keepScreenOn')} .st-switch`); await wait(200);
+ok((await calls('setKeepScreenOn')).at(-1) === true, 'keep screen on → shell (power-save blocker)');
+// default folder
+ok((await statusOf('winDefaultDir')) === '마지막으로 쓴 폴더', 'default folder: last used');
+await page.click(`${row('winDefaultDir')} [data-act=choose]`); await wait(350);
+ok((await statusOf('winDefaultDir')) === 'C:\\Users\\me\\Music\\Scores' && (await calls('setAppSettings')).at(-1).defaultDir === 'C:\\Users\\me\\Music\\Scores', 'chosen folder stored and sent to the shell');
+await page.click(`${row('winDefaultDir')} [data-act=clear]`); await wait(300);
+ok((await st()).winDefaultDir === '' && (await calls('setAppSettings')).at(-1).defaultDir === '' && !(await page.$(`${row('winDefaultDir')} [data-act=clear]`)), 'back to the last used folder');
+await page.evaluate(() => { window.__native.folder = null; }); await page.click(`${row('winDefaultDir')} [data-act=choose]`); await wait(300);
+ok((await st()).winDefaultDir === '', 'cancelling the folder dialog changes nothing');
+await page.click(`${row('winFileAssoc')} [data-act=open]`); await wait(150);
+ok((await calls('openSystemSettings')).at(-1) === 'default-apps', 'file associations → Windows default-apps settings');
+await page.click(`${row('winSettingsFile')} [data-act=open]`); await wait(150);
+ok((await calls('showSettingsFile')).length === 1, 'settings file shown in Explorer');
+// interface size uses the shell's zoom, not CSS
+await open('display');
+await page.evaluate(() => { const i = document.querySelector('.st-row[data-id="uiScale"] input'); i.value = 125; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); }); await wait(250);
+ok((await calls('setZoomFactor')).at(-1) === 1.25 && await page.evaluate(() => !document.documentElement.hasAttribute('data-ui-scale')), 'interface size → native zoom factor 1.25');
+// this device
+await open('device'); await wait(500);
+const dev = await page.$$eval('.st-row[data-type=info] .st-info', els => els.map(e => e.textContent));
+ok(dev[0] === 'Windows 앱 · PC 화면', 'this device: ' + dev[0]);
+const diag = await page.evaluate(async () => { const m = await import('./js/settings.js'); return m.diagnostics({ ...window.JSE.app.prefs.env(false) }); });
+ok(diag.includes('셸: Electron 33.2.0') && diag.includes('winStartMaximized = true'), 'diagnostics name the shell and the changed settings');
+// export / import through the native file dialogs
+await open('advanced');
+await page.click(`${row('exportSettings')} [data-act=export]`); await wait(300);
+const sf = (await calls('saveFile')).at(-1);
+const exported = JSON.parse(Buffer.from(sf.base64, 'base64').toString('utf8'));
+ok(sf.name === 'jse-settings.json' && exported.format === 'jse-settings' && exported.settings.winStartMaximized === true && exported.platform === 'windows', 'settings exported through the save dialog');
+exported.settings.winStartMaximized = false; exported.settings.volume = 20;
+await page.evaluate(b64 => { window.__native.openFile = { name: 'jse-settings.json', mime: 'application/json', base64: b64 }; }, Buffer.from(JSON.stringify(exported)).toString('base64'));
+await page.click(`${row('importSettings')} [data-act=import]`); await wait(400);
+ok((await st()).volume === 20 && (await st()).winStartMaximized === false && (await calls('setAppSettings')).at(-1).startMaximized === false, 'settings imported through the open dialog and pushed to the shell');
+await close();
+// close confirmation
+const dirty = () => page.evaluate(() => { window.JSE.app.exec('테스트', s => { s.meta.subtitle = String(Math.random()); }); });
+const ask = async () => { await page.evaluate(() => window.__native.closeReq()); await wait(350); return !!(await page.$('.dialog-backdrop')); };
+await dirty();
+ok(!(await ask()) && (await closed()) === 1, 'close request, autosave on ("자동"): saved as a draft, closes without a question');
+await page.evaluate(() => window.JSE.app.setSetting('winCloseConfirm', 'always')); await dirty();
+ok(await ask() && (await closed()) === 1, '"항상 묻기": the question appears, the window stays');
+ok(!(await page.evaluate(async () => { await window.__native.closeReq(); return document.querySelectorAll('.dialog-backdrop').length > 1; })), 'a second request does not stack another question');
+await page.click('.dialog footer button:has-text("취소")'); await wait(250);
+ok((await closed()) === 1 && !(await page.$('.dialog-backdrop')), 'cancel keeps the window open');
+await page.click('.win-controls [data-w=close]'); await wait(350);
+ok(await page.$('.dialog-backdrop'), 'the ✕ button of the title bar asks the same question');
+await page.click('.dialog footer button:has-text("저장 안 함")'); await wait(350);
+ok((await closed()) === 2, '"저장 안 함" closes');
+await page.evaluate(() => { window.JSE.app.setSetting('winCloseConfirm', 'never'); window.JSE.app.setSetting('autosave', false); }); await dirty();
+ok(!(await ask()) && (await closed()) === 3, '"묻지 않기": closes at once');
+await page.evaluate(() => window.JSE.app.setSetting('winCloseConfirm', 'auto')); await dirty();
+ok(await ask() && (await closed()) === 3, '"자동" without autosave asks (as before)');
+await page.click('.dialog footer button:has-text("취소")'); await wait(200);
+await page.evaluate(() => { window.JSE.app.prefs.reset(null); window.JSE.app.dirty = false; }); await wait(200);
+ok(JSON.stringify((await calls('setAppSettings')).at(-1)) === JSON.stringify({ rememberBounds: true, startMaximized: false, disableGpu: false, defaultDir: '' }) && (await calls('setZoomFactor')).at(-1) === 1, 'reset all reaches the shell');
+console.log(`settings/windows shell: ${passed} passed, ${fails.length} failed`);

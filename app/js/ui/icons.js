@@ -153,6 +153,7 @@ export const ICONS = {
   minus: ui('<path d="M5 12h14"/>'),
   pencil: ui(`<path d="M4 20h4L18.6 9.4a2.8 2.8 0 0 0-4-4L4 16z" ${tint}/><path d="m13.2 6.8 4 4"/>`),
   text: ui(`<rect x="3.5" y="3.5" width="17" height="17" rx="4" ${tint} stroke="none"/><path d="M7.5 8h9M12 8v9"/>`),
+  font: ui(`<path d="M2.8 18.5 8.3 5.5l5.5 13M4.9 13.8h6.8"/><circle cx="17.7" cy="15.4" r="3" ${tint}/><path d="M20.7 12.3v6.2"/>`),
   lyrics: ui(`<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5z" ${tint}/><path d="M8 8.5h8M8 11.5h5"/>`),
   chord: ui(`<rect x="5" y="3.5" width="14" height="17" rx="2.5" ${tint} stroke="none"/><path d="M5 7.5h14M8 3.5v17M12 3.5v17M16 3.5v17M5 12h14M5 16.5h14" stroke-width="1.2"/><circle cx="12" cy="9.8" r="1.7" ${solid}/><circle cx="16" cy="14.3" r="1.7" ${solid}/>`),
   info: ui(`<circle cx="12" cy="12" r="9" ${tint}/><path d="M12 11v5.5M12 7.8v.1"/>`),

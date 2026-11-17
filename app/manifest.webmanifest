@@ -18,7 +18,7 @@
     { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "file_handlers": [
-    { "action": "./", "accept": { "application/x-scoresnap": [".ssnap"], "application/vnd.recordare.musicxml+xml": [".musicxml"], "application/vnd.recordare.musicxml": [".mxl"], "application/vnd.makemusic.notation": [".musx", ".ftmx"] } }
+    { "action": "./", "accept": { "application/x-scoresnap": [".ssnap"], "application/vnd.recordare.musicxml+xml": [".musicxml"], "application/vnd.recordare.musicxml": [".mxl"], "application/vnd.makemusic.notation": [".musx", ".ftmx"], "application/x-musescore": [".mscz"], "application/x-musescore+xml": [".mscx"], "application/x-nwc": [".nwc"], "text/x-nwctxt": [".nwctxt"] } }
   ],
   "shortcuts": [
     { "name": "사진으로 악보 인식", "url": "./?action=scan", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },

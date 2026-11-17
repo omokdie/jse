@@ -8,6 +8,9 @@ import { t } from '../i18n.js';
 
 let openCount = 0;
 export function dialogOpen() { return openCount > 0; }
+/** Full-screen UI that is not built with showDialog (the settings window) counts as an open dialog too,
+ *  so the editor's keyboard shortcuts stay quiet while it is up. */
+export function modalCount(delta) { openCount = Math.max(0, openCount + delta); }
 
 /**
  * Show a modal. Returns a promise resolving with the value passed to close(value).
@@ -69,8 +72,9 @@ export async function newScoreDialog(app, ui) {
   if (!res) return;
   const instruments = templates[tpl].id === 'custom' ? [...custom] : templates[tpl].instruments;
   if (!instruments.length) instruments.push('piano');
+  // page size, margins, staff size, measure numbers and fonts come from 설정 › 새 악보 기본값 (App.newScore)
   app.newScore({ title: res.title || '제목 없음', composer: res.composer, instruments, measures: res.measures, timeSig: { num: res.num, den: res.den }, keyFifths: res.key, tempo: res.tempo });
-  ui.view.fit('width');
+  if (ui.fitDefault) ui.fitDefault(); else ui.view.fit('width');
   ui.toast('새 악보를 만들었습니다. 오선을 더블클릭하면 음표를 입력할 수 있어요.', 'ok');
 }
 
@@ -160,22 +164,4 @@ export async function tempoDialog(app, mi) {
   const res = await showDialog({ title: t('tempo'), body: `<div class="row"><label>빠르기말</label><div class="ctl"><input type="text" id="tp-text" value="${escapeXml(tp.text || '')}" placeholder="Allegro, 보통 빠르게…"></div></div><div class="row"><label>BPM</label><div class="ctl"><select id="tp-unit">${['quarter', 'half', 'eighth'].map(u => `<option value="${u}" ${tp.beatUnit === u ? 'selected' : ''}>${t(u)}</option>`).join('')}</select> = <input type="number" id="tp-bpm" value="${tp.bpm || 120}" min="20" max="300" style="width:70px"></div></div><div class="row"><label></label><div class="ctl"><label class="checkbox"><input type="checkbox" id="tp-show" ${tp.showBpm !== false ? 'checked' : ''}> BPM 숫자 표시</label></div></div>`, buttons: [{ label: '삭제', value: 'delete', danger: true }, { label: t('cancel'), value: null }, { label: t('apply'), primary: true, value: r => ({ text: r.querySelector('#tp-text').value, bpm: +r.querySelector('#tp-bpm').value || 120, beatUnit: r.querySelector('#tp-unit').value, showBpm: r.querySelector('#tp-show').checked, dots: 0 }) }] });
   if (res === 'delete') app.exec('템포 삭제', s => C.setTempo(s, mi, null));
   else if (res) app.exec('템포', s => C.setTempo(s, mi, res));
-}
-export async function settingsDialog(app, ui) {
-  const st = app.settings;
-  const res = await showDialog({ title: t('settings'), body: `
-    <div class="row"><label>언어</label><div class="ctl"><select id="st-lang"><option value="ko" ${st.lang === 'ko' ? 'selected' : ''}>한국어</option><option value="en" ${st.lang === 'en' ? 'selected' : ''}>English</option></select></div></div>
-    <div class="row"><label>테마</label><div class="ctl"><select id="st-theme"><option value="auto" ${st.theme === 'auto' ? 'selected' : ''}>시스템 설정</option><option value="light" ${st.theme === 'light' ? 'selected' : ''}>밝게</option><option value="dark" ${st.theme === 'dark' ? 'selected' : ''}>어둡게</option></select></div></div>
-    <div class="row"><label>자동 저장</label><div class="ctl"><label class="checkbox"><input type="checkbox" id="st-autosave" ${st.autosave ? 'checked' : ''}> 편집 내용을 브라우저에 자동 저장</label></div></div>
-    <div class="row"><label>자동 업데이트</label><div class="ctl"><label class="checkbox"><input type="checkbox" id="st-update" ${st.autoUpdate ? 'checked' : ''}> 인터넷 연결 시 자동으로 업데이트</label></div></div>
-    <div class="row"><label>초보자 안내</label><div class="ctl"><label class="checkbox"><input type="checkbox" id="st-tips" ${st.tips ? 'checked' : ''}> 간단 모드 + 도움말 표시</label></div></div>
-    <div class="row"><label>버전</label><div class="ctl">${ui.version || ''} <button class="btn sm" id="st-check">${icon('refresh')} 업데이트 확인</button></div></div>`,
-    buttons: [{ label: t('cancel'), value: null }, { label: t('apply'), primary: true, value: r => ({ lang: r.querySelector('#st-lang').value, theme: r.querySelector('#st-theme').value, autosave: r.querySelector('#st-autosave').checked, autoUpdate: r.querySelector('#st-update').checked, tips: r.querySelector('#st-tips').checked }) }],
-    onOpen: root => root.querySelector('#st-check').addEventListener('click', () => ui.updater?.check(true)) });
-  if (!res) return;
-  const langChanged = res.lang !== st.lang;
-  Object.assign(app.settings, res); app.saveSettings();
-  ui.applyTheme(); ui.updater?.setAuto(res.autoUpdate);
-  if (langChanged) { const { setLang } = await import('../i18n.js'); setLang(res.lang); ui.rebuild(); }
-  ui.renderPanels();
 }

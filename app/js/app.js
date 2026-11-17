@@ -2,6 +2,7 @@
 import { createScore, cloneScore, validateScore, findEvent, effectiveTimeSig, measureCapacity, durTicks, staffList, totalStaffCount } from './model/score.js';
 import * as C from './model/commands.js';
 import { engrave } from './engrave/render.js';
+import { SettingsManager, STORAGE_KEY, migrate, newScoreDefaults } from './settings.js';
 
 export class App extends EventTarget {
   constructor() {
@@ -24,13 +25,30 @@ export class App extends EventTarget {
     this.currentPage = 0;
     this.playing = false;
     this.settings = this.loadSettings();
+    this.prefs = new SettingsManager(this);   // schema, apply hooks, reset / export / import (settings.js)
     this._layoutTimer = null;
   }
+  /** Stored settings of any older version → complete, valid object (defaults + migration in settings.js). */
   loadSettings() {
-    const def = { tips: true, lang: 'ko', autosave: true, keymap: 'musescore', theme: 'auto', autoUpdate: true, mobileDurationBar: true };
-    try { return { ...def, ...(JSON.parse(localStorage.getItem('ssnap.settings') || '{}')) }; } catch { return def; }
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { /* broken JSON → defaults */ }
+    return migrate(stored);
   }
-  saveSettings() { try { localStorage.setItem('ssnap.settings', JSON.stringify(this.settings)); } catch { /* ignore */ } }
+  saveSettings() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.settings)); } catch { /* ignore */ } }
+  /** Change one registered setting (validates, saves, applies, emits 'settings'). */
+  setSetting(id, value) { return this.prefs.set(id, value); }
+  /** Short vibration for touch feedback — off when 진동 피드백 is disabled or the device cannot vibrate. */
+  haptic(ms = 10) {
+    if (this.settings.haptics === false) return;
+    try { const n = globalThis.ScoreSnapNative; if (typeof n?.vibrate === 'function') { Promise.resolve(n.vibrate(ms)).catch(() => {}); return; } if (navigator.vibrate) navigator.vibrate(ms); } catch { /* ignore */ }
+  }
+  /** Page size, margins, staff size, measure numbers and text styles from 새 악보 기본값 → a freshly created score. */
+  applyNewScoreDefaults(score) {
+    if (!score?.settings) return score;
+    const d = newScoreDefaults(this.settings);
+    Object.assign(score.settings, d);
+    return score;
+  }
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
   // ---------- document lifecycle ----------
@@ -48,7 +66,7 @@ export class App extends EventTarget {
     this.emit('selection');
     this.emit('dirty');
   }
-  newScore(opts) { this.setScore(createScore(opts), { fileName: null }); }
+  newScore(opts) { this.setScore(this.applyNewScoreDefaults(createScore(opts)), { fileName: null }); }
   relayout() {
     const t0 = performance.now();
     let src = this.score; const opts = {};

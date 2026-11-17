@@ -41,6 +41,7 @@
       "menu.js",
       "protocol.js",
       "settings.js",
+      "winstate.js",
       "package.json"
     ],
     "extraResources": [
@@ -49,6 +50,7 @@
         "to": "web",
         "filter": [
           "**/*",
+          "!fonts/web/**",
           "!**/.DS_Store",
           "!**/Thumbs.db"
         ]
@@ -83,7 +85,8 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false,
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "include": "build/installer.nsh"
     },
     "fileAssociations": [
       {

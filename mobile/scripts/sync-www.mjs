@@ -40,6 +40,8 @@ function parseArgs(argv) {
 }
 
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store', 'Thumbs.db']);
+/** app/fonts/web = the on-demand "JSE 글꼴" (app/js/fonts.js): published on the web site (--pages) only — never in the Android bundle, the OTA zip or the precache list. */
+const WEB_FONTS = path.join('fonts', 'web');
 
 /** Insert the shim script tag into an index.html string (idempotent). */
 export function injectShim(html) {
@@ -86,7 +88,7 @@ export function syncWww(opts) {
   fs.mkdirSync(out, { recursive: true });
   fs.cpSync(src, out, {
     recursive: true,
-    filter: (p) => !SKIP.has(path.basename(p)),
+    filter: (p) => !SKIP.has(path.basename(p)) && (pages || path.relative(src, p) !== WEB_FONTS),
   });
 
   fs.mkdirSync(path.join(out, 'js'), { recursive: true });
@@ -133,7 +135,7 @@ export function finalizeWebTree(out) {
   };
   walk(out);
   const skip = new Set(['sw.js', 'asset-list.json', 'version.json', '.nojekyll']);
-  const list = files.filter((f) => !skip.has(f) && !/^web-.*\.zip$/.test(f) && !/\.(map|md)$/.test(f) && !f.startsWith('vendor/pdfjs/LICENSE'));
+  const list = files.filter((f) => !skip.has(f) && !/^web-.*\.zip$/.test(f) && !/\.(map|md)$/.test(f) && !f.startsWith('vendor/pdfjs/LICENSE') && !f.startsWith('fonts/web/'));
   fs.writeFileSync(path.join(out, 'asset-list.json'), JSON.stringify(list));
   const swFile = path.join(out, 'sw.js');
   if (fs.existsSync(swFile)) {

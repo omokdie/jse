@@ -22,18 +22,24 @@
 
   // Prefer the low-level bridge primitives (always present in the injected runtime);
   // fall back to the registerPlugin() proxy.
-  function call(method, options) {
+  function callPlugin(pluginName, method, options) {
     var opts = options && typeof options === 'object' ? options : {};
+    var proxy = pluginName === PLUGIN ? plugin : (cap.Plugins && cap.Plugins[pluginName]) || null;
     try {
-      if (typeof cap.nativePromise === 'function') return cap.nativePromise(PLUGIN, method, opts);
-      if (plugin && typeof plugin[method] === 'function') return plugin[method](opts);
+      if (typeof cap.nativePromise === 'function') return cap.nativePromise(pluginName, method, opts);
+      if (proxy && typeof proxy[method] === 'function') return proxy[method](opts);
     } catch (err) {
       return Promise.reject(err);
     }
-    return Promise.reject(new Error('ScoreSnapNative.' + method + ' unavailable'));
+    return Promise.reject(new Error(pluginName + '.' + method + ' unavailable'));
   }
 
-  function listen(eventName, handler) {
+  function call(method, options) {
+    return callPlugin(PLUGIN, method, options);
+  }
+
+  function listenTo(pluginName, eventName, handler) {
+    var proxy = pluginName === PLUGIN ? plugin : (cap.Plugins && cap.Plugins[pluginName]) || null;
     var cb = function (data, err) {
       if (err) return;
       try {
@@ -44,19 +50,54 @@
     };
     try {
       if (typeof cap.nativeCallback === 'function') {
-        cap.nativeCallback(PLUGIN, 'addListener', { eventName: eventName }, cb);
-        return;
+        cap.nativeCallback(pluginName, 'addListener', { eventName: eventName }, cb);
+        return true;
       }
-      if (plugin && typeof plugin.addListener === 'function') plugin.addListener(eventName, cb);
+      if (proxy && typeof proxy.addListener === 'function') {
+        proxy.addListener(eventName, cb);
+        return true;
+      }
     } catch (e) {
       console.error('[ScoreSnapNative] addListener failed', e);
     }
+    return false;
+  }
+
+  function listen(eventName, handler) {
+    listenTo(PLUGIN, eventName, handler);
+  }
+
+  /* ---------------------------------------------------------------- what the installed shell can do */
+
+  // The web bundle is updated over the air and can be newer than the installed APK, so additions to the
+  // native side are only offered when the shell really has them (the plugin list Capacitor injects).
+  function pluginHeader(name) {
+    try {
+      var heads = cap.PluginHeaders;
+      if (Array.isArray(heads)) {
+        for (var i = 0; i < heads.length; i++) if (heads[i] && heads[i].name === name) return heads[i];
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function hasPlugin(name) {
+    return !!pluginHeader(name) || !!(cap.Plugins && cap.Plugins[name]);
+  }
+
+  function pluginHasMethod(name, method) {
+    var head = pluginHeader(name);
+    if (head && Array.isArray(head.methods)) {
+      return head.methods.some(function (m) { return m && m.name === method; });
+    }
+    var proxy = cap.Plugins && cap.Plugins[name];
+    return !!proxy && typeof proxy[method] === 'function';
   }
 
   /* ---------------------------------------------------------------- sync info */
 
   // MainActivity/plugin adds a JavascriptInterface so version info is available synchronously.
-  var info = { appVersion: '0.0.0', nativeVersion: '0.0.0', versionCode: 0, webVersion: '', packagedWebVersion: '' };
+  var info = { appVersion: '0.0.0', nativeVersion: '0.0.0', versionCode: 0, webVersion: '', packagedWebVersion: '', api: 1 };
   try {
     var sync = window.ScoreSnapNativeSync;
     if (sync && typeof sync.getInfoJson === 'function') {
@@ -185,7 +226,9 @@
     var map = {
       ssnap: 'application/x-scoresnap', pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
       webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', musicxml: 'application/vnd.recordare.musicxml+xml',
-      xml: 'application/vnd.recordare.musicxml+xml', mxl: 'application/vnd.recordare.musicxml', mid: 'audio/midi', midi: 'audio/midi'
+      xml: 'application/vnd.recordare.musicxml+xml', mxl: 'application/vnd.recordare.musicxml', mid: 'audio/midi', midi: 'audio/midi',
+      musx: 'application/vnd.makemusic.notation', ftmx: 'application/vnd.makemusic.notation',
+      mscz: 'application/x-musescore', mscx: 'application/x-musescore+xml', nwc: 'application/x-nwc', nwctxt: 'text/x-nwctxt'
     };
     return map[ext] || '';
   }
@@ -308,6 +351,62 @@
       return call('getInfo');
     }
   };
+
+  /* ---------------------------------------------------------------- device options (설정 › Android 앱) */
+
+  // Native API level 2 (ScoreSnapNativePlugin.NATIVE_API): screen stays on, immersive mode, orientation lock, haptics.
+  function hasNative(method) {
+    return Number(info.api) >= 2 || pluginHasMethod(PLUGIN, method);
+  }
+
+  function quiet() { /* resolved without a value */ }
+
+  if (hasNative('setKeepScreenOn')) {
+    api.setKeepScreenOn = function (on) {
+      return call('setKeepScreenOn', { on: !!on }).then(function () { return !!on; });
+    };
+  }
+  if (hasNative('setImmersive')) {
+    api.setImmersive = function (on) {
+      return call('setImmersive', { on: !!on }).then(function () { return !!on; });
+    };
+  }
+  if (hasNative('setOrientation')) {
+    api.setOrientation = function (orientation) {
+      var o = orientation === 'portrait' || orientation === 'landscape' ? orientation : 'auto';
+      return call('setOrientation', { orientation: o }).then(function () { return o; });
+    };
+  }
+  if (hasNative('vibrate')) {
+    api.vibrate = function (ms) {
+      var d = Math.max(1, Math.min(200, Math.round(Number(ms) || 10)));
+      return call('vibrate', { duration: d }).then(quiet, quiet);
+    };
+  }
+
+  // Back key / back gesture: Capacitor's App plugin (part of every JSE shell) reports it.
+  // Subscribing switches off the plugin's default (history back) — the web app decides from then on.
+  var backListeners = [];
+  var backBound = false;
+  if (hasPlugin('App')) {
+    api.onBackButton = function (cb) {
+      if (typeof cb !== 'function') return;
+      backListeners.push(cb);
+      if (backBound) return;
+      backBound = listenTo('App', 'backButton', function (data) {
+        backListeners.forEach(function (fn) {
+          try { fn(data || {}); } catch (e) { console.error('[ScoreSnapNative] onBackButton error', e); }
+        });
+      });
+    };
+    /** Leave the app like the Home button does (it keeps running); falls back to closing it. */
+    api.minimizeApp = function () {
+      return callPlugin('App', 'minimizeApp').then(quiet, function () { return callPlugin('App', 'exitApp').then(quiet, quiet); });
+    };
+    api.exitApp = function () {
+      return callPlugin('App', 'exitApp').then(quiet, quiet);
+    };
+  }
 
   window.ScoreSnapNative = api;
 })();

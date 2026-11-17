@@ -5,7 +5,7 @@ import path from 'node:path';
 const root = new URL('..', import.meta.url).pathname;
 const out = path.join(root, 'dist/demo');
 fs.rmSync(out, { recursive: true, force: true });
-fs.cpSync(path.join(root, 'app'), out, { recursive: true, filter: p => !p.includes(`${path.sep}vendor`) && !p.endsWith('sw.js') && !p.endsWith('LICENSE-FreeFont.txt') });
+fs.cpSync(path.join(root, 'app'), out, { recursive: true, filter: p => !p.includes(`${path.sep}vendor`) && !p.endsWith('sw.js') && !p.endsWith('LICENSE-FreeFont.txt') && !p.includes(`${path.sep}fonts${path.sep}web`) });   // fonts/web = on-demand JSE 글꼴 (Pages only)
 const CDN = {
   jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   pdfLib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js',

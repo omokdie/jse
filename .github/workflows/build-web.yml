@@ -49,7 +49,8 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.version }}"
           test -f site/index.html || { echo "::error::app/index.html is missing"; exit 1; }
-          ( cd site && zip -r -X -q "../web-${VERSION}.zip" . -x '.nojekyll' )
+          # fonts/web/ = on-demand "JSE 글꼴": served by Pages, never part of the app bundle (app/js/fonts.js)
+          ( cd site && zip -r -X -q "../web-${VERSION}.zip" . -x '.nojekyll' 'fonts/web/*' )
           mv "web-${VERSION}.zip" site/
           ls -la "site/web-${VERSION}.zip"
 

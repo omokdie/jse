@@ -6,8 +6,9 @@ import {
   TPQ, DUR_TICKS, DUR_BASES, newId, durTicks, baseTicks, measureCapacity, voiceTicks,
   midiOf, DEFAULT_DRUM_MAP, INSTRUMENTS, validateScore, createScore, createPart, createStaff,
   createMeasure, effectiveKeySig, effectiveClef, staffList, staffPosition, noteAtStaffPosition,
-  ticksToDurations, makeRest,
+  ticksToDurations, makeRest, ottavaShifts,
 } from '../model/score.js';
+import { ptToSp, spToPt, resolveTextStyle, normalizeTextStyles } from '../model/textstyles.js';   // fonts of titles / lyrics / texts
 
 // =================================================================================
 // 1. Minimal XML parser → { tag, attrs, children, text }
@@ -164,7 +165,8 @@ const ART_OUT = { staccato: ['staccato'], staccatissimo: ['staccatissimo'], acce
   'marcato-staccato': ['strong-accent', 'staccato'] };
 const ORN_IN = { 'trill-mark': 'trill', turn: 'turn', 'inverted-turn': 'inverted-turn', mordent: 'mordent', 'inverted-mordent': 'inverted-mordent' };
 const ORN_OUT = { trill: 'trill-mark', turn: 'turn', 'inverted-turn': 'inverted-turn', mordent: 'mordent', 'inverted-mordent': 'inverted-mordent' };
-const DYNAMICS = new Set(['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sfz', 'sfp', 'fp', 'fz', 'rfz']);
+// every MusicXML dynamic that is spelled with the letters the dynamics font has (p m f s z r); "n" (niente) is left out
+const DYNAMICS = new Set(['pppppp', 'ppppp', 'pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'ffff', 'fffff', 'ffffff', 'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'sfzp', 'fp', 'pf', 'fz', 'rf', 'rfz']);
 const ACC_IN = { sharp: 'sharp', flat: 'flat', natural: 'natural', 'double-sharp': 'double-sharp', 'sharp-sharp': 'double-sharp',
   'flat-flat': 'double-flat', 'double-flat': 'double-flat', 'natural-sharp': 'sharp', 'natural-flat': 'flat' };
 const ACC_OUT = { sharp: 'sharp', flat: 'flat', natural: 'natural', 'double-sharp': 'double-sharp', 'double-flat': 'flat-flat' };
@@ -283,6 +285,7 @@ export function importMusicXML(xmlText) {
   score.parts = []; score.measures = []; score.spanners = [];
   const ctx = { score, staffBase: [], infos: [], voltas: new Map() };
   readHeader(root, score);
+  readTextStyles(root, score);
   const partInfos = readPartList(root);
   const partNodes = collectParts(root, partInfos);
   // Pass A: parts & staves must exist before measures can be created.
@@ -373,6 +376,34 @@ function readHeader(root, score) {
   settings.concertPitch = has(defaults, 'concert-score');
   const wf = attr(kid(defaults, 'word-font'), 'font-family'), lf = attr(kid(defaults, 'lyric-font'), 'font-family');
   settings.fonts = { text: wf || '', lyrics: lf || '' };
+}
+
+/**
+ * Fonts → score.settings.textStyles (model/textstyles.js). A file written by JSE carries its styles exactly
+ * (miscellaneous-field "jse-text-styles"); from other programs <lyric-font>, <word-font> and the fonts of the
+ * typed title-page credits are taken (family, size in pt → staff spaces, bold / italic when stated).
+ */
+function readTextStyles(root, score) {
+  const s = score.settings, ident = kid(root, 'identification');
+  const own = kids(kid(ident, 'miscellaneous'), 'miscellaneous-field').find(f => attr(f, 'name') === 'jse-text-styles');
+  if (own) { try { const ts = normalizeTextStyles(JSON.parse(own.text)); if (ts) s.textStyles = ts; } catch { /* not ours after all */ } return; }
+  if (/^JSE\b/.test(txt(kid(ident, 'encoding'), 'software') || '')) return;   // our own export without styles = the built-in look
+  const out = {};
+  const font = (key, el) => {
+    if (!el || out[key]) return;
+    const st = {}, family = String(attr(el, 'font-family', '')).split(',')[0].trim(), pt = parseFloat(attr(el, 'font-size', ''));
+    if (family) st.family = family;
+    if (pt >= 4 && pt <= 96 && Math.abs(pt - spToPt(resolveTextStyle(null, key).size, s.staffSpaceMm)) > 0.06) st.size = ptToSp(pt, s.staffSpaceMm);   // (a size equal to ours when rounded stays "built-in")
+    if (attr(el, 'font-weight')) st.bold = attr(el, 'font-weight') === 'bold';
+    if (attr(el, 'font-style')) st.italic = attr(el, 'font-style') === 'italic';
+    out[key] = st;
+  };
+  const defaults = kid(root, 'defaults');
+  font('lyrics', kid(defaults, 'lyric-font')); font('text', kid(defaults, 'word-font'));
+  const keyOf = { title: 'title', subtitle: 'subtitle', composer: 'composer', arranger: 'composer', lyricist: 'lyricist' };
+  for (const cr of kids(root, 'credit')) { const key = attr(cr, 'page', '1') === '1' && keyOf[txt(cr, 'credit-type')]; if (key) font(key, kid(cr, 'credit-words')); }
+  const ts = normalizeTextStyles(out);
+  if (ts) s.textStyles = ts;
 }
 
 function classifyPageSize(w, h) {
@@ -467,7 +498,8 @@ function parsePart(ctx, pi, partNode) {
     pi, part, base: ctx.staffBase[pi], divisions: 0,
     voiceMaps: part.staves.map(() => new Map()),       // xml voice string → compact index, per staff
     curClef: part.staves.map(s => s.clef), pendingClef: {},
-    tuplets: new Map(), open: { slur: new Map(), wedge: new Map(), ottava: new Map(), pedal: new Map(), textLine: new Map(), gliss: new Map(), trill: new Map() },
+    tuplets: new Map(), tupletRuns: new Map(), tupletSerial: 0, owed: new Map(), borrowed: new Map(),
+    open: { slur: new Map(), wedge: new Map(), ottava: new Map(), pedal: new Map(), textLine: new Map(), gliss: new Map(), trill: new Map() },
     lastEvent: null, lastByStaff: part.staves.map(() => null),
     usesBeams: partNode.measures.some(m => kids(m, 'note').some(n => has(n, 'beam'))),
   };
@@ -480,6 +512,8 @@ function parseMeasure(ctx, st, mi, mNode) {
   const pending = [];         // direction items resolved after all notes are known
   const voiceLen = new Map(); // "si:vi" → model ticks so far
   let cursor = 0;
+  st.tupletRuns.clear(); st.owed.clear();   // a tuplet never continues over a barline
+  st.borrowed.clear(); st.voiceSpans = null; st.mNode = mNode;
   if (attr(mNode, 'implicit') === 'yes' && mi === 0) measure.pickup = true;
   for (const [sIdx, clef] of Object.entries(st.pendingClef)) { setMeasureClef(ctx, st, measure, +sIdx, clef); }
   st.pendingClef = {};
@@ -498,6 +532,15 @@ function parseMeasure(ctx, st, mi, mNode) {
       default: break;
     }
   }
+  // a cross-staff tuplet that ended on another staff: complete this staff's share of it with hidden rests
+  for (const [key, o] of st.owed) {
+    const [si, vi] = key.split(':').map(Number);
+    const voice = measure.staves[st.base + si].voices[vi];
+    const have = voiceLen.has(key) ? voiceLen.get(key) : voice ? voiceTicks(voice) : 0;
+    const rs = voice && o.until > have + 15 ? gapRests(o.until - have, o.tup, gapTolerance(st)) : null;
+    if (rs) { voice.push(...rs); voiceLen.set(key, o.until); }
+  }
+  st.owed.clear();
   resolvePending(ctx, st, measure, placed, pending);
   for (const p of placed) if (!p.ev.grace) { const prev = st.lastByStaff[p.si]; if (!prev || prev.tick <= p.tick) st.lastByStaff[p.si] = p; }
 }
@@ -531,10 +574,48 @@ function readAttributes(ctx, st, measure, mi, el, cursor) {
   if (tr) st.part.transposeChromatic = Math.round(num(tr, 'chromatic', 0) + 12 * num(tr, 'octave-change', 0));
 }
 
+/** Voice index (0–3) of an XML voice on a staff. The first four XML voices seen on a staff keep an index of their own
+ *  for the whole piece. Further ones (in piano music the other staff's voices come over for cross-staff notes) borrow,
+ *  measure by measure, a voice that no other XML voice of this measure needs at the same time. */
 function voiceIndexFor(st, si, voiceKey) {
   const map = st.voiceMaps[si];
-  if (!map.has(voiceKey)) map.set(voiceKey, Math.min(map.size, 3));
-  return map.get(voiceKey);
+  if (map.has(voiceKey)) return map.get(voiceKey);
+  if (map.size < 4) { map.set(voiceKey, map.size); return map.get(voiceKey); }
+  const key = `${si}|${voiceKey}`;
+  if (!st.borrowed.has(key)) {
+    if (!st.voiceSpans) st.voiceSpans = measureVoiceSpans(st, st.mNode);
+    const spans = st.voiceSpans[si], mine = spans.get(voiceKey) || [0, Infinity, 0, Infinity];
+    const taken = [[], [], [], []];                       // index → spans of the XML voices that use it in this measure
+    for (const [v, sp] of spans) {
+      if (v === voiceKey) continue;
+      const i = map.has(v) ? map.get(v) : st.borrowed.get(`${si}|${v}`);
+      if (i != null) taken[i].push(sp);
+    }
+    let pick = 3;
+    // sharing works when the other voice is wholly earlier (in time and in the file) or wholly later
+    const apart = sp => (sp[1] <= mine[0] && sp[3] < mine[2]) || (sp[0] >= mine[1] && sp[2] > mine[3]);
+    for (let i = 3; i >= 0; i--) if (taken[i].every(apart)) { pick = i; break; }
+    st.borrowed.set(key, pick);
+  }
+  return st.borrowed.get(key);
+}
+/** Per staff: XML voice → [first tick, end tick, first note, last note] of its notes in this measure
+ *  (ticks in divisions, notes counted in file order). */
+function measureVoiceSpans(st, mNode) {
+  const spans = st.part.staves.map(() => new Map());
+  let cur = 0, ord = 0;
+  for (const el of mNode ? mNode.children : []) {
+    if (el.tag === 'backup') cur = Math.max(0, cur - num(el, 'duration', 0));
+    else if (el.tag === 'forward') cur += num(el, 'duration', 0);
+    else if (el.tag === 'note' && !kid(el, 'chord') && !kid(el, 'grace')) {
+      const d = num(el, 'duration', 0), v = txt(el, 'voice') || '1';
+      const m = spans[clamp(Math.round(num(el, 'staff', 1)) - 1, 0, spans.length - 1)];
+      const sp = m.get(v);
+      if (sp) { sp[0] = Math.min(sp[0], cur); sp[1] = Math.max(sp[1], cur + d); sp[3] = ord; } else m.set(v, [cur, cur + d, ord, ord]);
+      cur += d; ord++;
+    }
+  }
+  return spans;
 }
 
 function readNote(ctx, st, measure, mi, el, cursor, placed, voiceLen) {
@@ -600,17 +681,19 @@ function readNote(ctx, st, measure, mi, el, cursor, placed, voiceLen) {
   const bv = beam && txt(beam);
   if (bv === 'begin' || bv === 'continue' || bv === 'end') ev.beam = bv;
   else if (st.usesBeams && DUR_TICKS[base] <= DUR_TICKS.eighth) ev.beam = 'none';
-  const vi = voiceIndexFor(st, si, txt(el, 'voice') || '1');
+  const xmlVoice = txt(el, 'voice') || '1';
+  const vi = voiceIndexFor(st, si, xmlVoice);
   const voiceKey = `${si}:${vi}`;
   const tupInfo = readNotations(ctx, st, measure, el, ev, note, voiceKey);
-  applyTuplet(st, ev, voiceKey, tuplet, tupInfo, tm, base, dots, ticks);
+  const run = applyTuplet(st, ev, voiceKey, xmlVoice, tuplet, tupInfo, tm, base, dots, ticks, cursor);
   readLyrics(el, ev);
   if (ev.kind === 'note' && !ev.notes.length) ev.kind = 'rest';
   // ---- place into the voice at the cursor (gaps become hidden rests)
   while (sm.voices.length <= vi) sm.voices.push([]);
   const voice = sm.voices[vi];
   const have = voiceLen.has(voiceKey) ? voiceLen.get(voiceKey) : voiceTicks(voice);
-  if (cursor > have + 15) for (const d of ticksToDurations(cursor - have)) { const r = makeRest(d.base, d.dots); r.hidden = true; voice.push(r); }
+  if (cursor > have + 15) voice.push(...gapFill(st, voiceKey, voice, have, cursor, ev, run));
+  else st.owed.delete(voiceKey);
   voice.push(ev);
   voiceLen.set(voiceKey, Math.max(have, cursor) + durTicks(ev));
   placed.push({ ev, si, vi, tick: cursor });
@@ -623,25 +706,100 @@ function effTime(score, mi) {
   return { num: 4, den: 4 };
 }
 
-/** Tuplet grouping: explicit <tuplet> notations, else inferred from consecutive time-modified notes. */
-function applyTuplet(st, ev, voiceKey, tuplet, info, tm, base, dots, ticks) {
+/** Tuplet grouping: explicit <tuplet> notations, else inferred from consecutive time-modified notes.
+ *  An explicit tuplet lives in one XML voice, but its notes may sit on different staves of the part (cross-staff
+ *  beaming). Every staff:voice it touches gets a group of its own (`run.keys`), and the places of the notes that are
+ *  on the other staff are filled with hidden rests of the same tuplet (gapFill, st.owed) — so each voice keeps its
+ *  exact length. Returns the explicit run the event belongs to, or null. */
+function applyTuplet(st, ev, voiceKey, xmlVoice, tuplet, info, tm, base, dots, ticks, cursor) {
+  let run = st.tupletRuns.get(xmlVoice) || null;
   let state = st.tuplets.get(voiceKey);
   if (info.tupletStart) {
-    state = { id: newId(), num: tuplet ? tuplet.num : 3, den: tuplet ? tuplet.den : 2, show: info.tupletStart.show, bracket: info.tupletStart.bracket, explicit: true, acc: 0 };
-    st.tuplets.set(voiceKey, state);
+    run = { serial: ++st.tupletSerial, num: tuplet ? tuplet.num : 3, den: tuplet ? tuplet.den : 2, show: info.tupletStart.show, bracket: info.tupletStart.bracket, start: cursor, keys: new Set() };
+    st.tupletRuns.set(xmlVoice, run);
+    if (state) { st.tuplets.delete(voiceKey); state = null; }
   }
-  if (!tuplet && !(state && !ev.grace)) return;
+  if (state && state.explicit && (!run || state.serial !== run.serial)) { st.tuplets.delete(voiceKey); state = null; }   // its tuplet ended on another staff
+  if (ev.grace) return null;                 // grace notes take no time: they neither join nor end a tuplet
+  if (!tuplet) {                             // a plain note is never part of a tuplet, and ends one that was left open
+    if (state) st.tuplets.delete(voiceKey);
+    if (run && !info.tupletStart) st.tupletRuns.delete(xmlVoice);
+    return null;
+  }
   if (!state) {
-    const nt = XML_TYPE_TO_BASE[txt(tm, 'normal-type')] || base;
-    const nd = tm && has(tm, 'normal-type') ? kids(tm, 'normal-dot').length : dots;
-    state = { id: newId(), num: tuplet.num, den: tuplet.den, show: 'number', explicit: false, acc: 0, target: tuplet.den * baseTicks(nt, nd) };
+    if (run) {
+      state = { id: newId(), num: run.num, den: run.den, show: run.show, bracket: run.bracket, explicit: true, serial: run.serial, acc: 0 };
+      run.keys.add(voiceKey);
+    } else {
+      const nt = XML_TYPE_TO_BASE[txt(tm, 'normal-type')] || base;
+      const nd = tm && has(tm, 'normal-type') ? kids(tm, 'normal-dot').length : dots;
+      state = { id: newId(), num: tuplet.num, den: tuplet.den, show: 'number', explicit: false, acc: 0, target: tuplet.den * baseTicks(nt, nd) };
+    }
     st.tuplets.set(voiceKey, state);
   }
-  if (ev.grace) return;
-  ev.tuplet = { id: state.id, num: tuplet ? tuplet.num : state.num, den: tuplet ? tuplet.den : state.den, show: state.show };
+  ev.tuplet = { id: state.id, num: tuplet.num, den: tuplet.den, show: state.show };
   if (state.bracket) ev.tuplet.bracket = true;
   state.acc += ticks;
-  if (info.tupletStop || (!state.explicit && state.acc >= state.target - 1)) st.tuplets.delete(voiceKey);
+  const mine = state.explicit ? run : null;
+  if (info.tupletStop) {
+    st.tuplets.delete(voiceKey);
+    if (mine) {
+      for (const k of mine.keys) {             // the other staves it touched are owed hidden rests up to its end
+        const other = k === voiceKey ? null : st.tuplets.get(k);
+        if (!other || other.serial !== mine.serial) continue;
+        const tup = { id: other.id, num: other.num, den: other.den, show: other.show };
+        if (other.bracket) tup.bracket = true;
+        st.owed.set(k, { tup, until: cursor + ticks });
+        st.tuplets.delete(k);
+      }
+      st.tupletRuns.delete(xmlVoice);
+    }
+  } else if (!state.explicit && state.acc >= state.target - 1) st.tuplets.delete(voiceKey);
+  return mine;
+}
+
+/** How far a length in the file may be from a notated one (files with coarse <divisions> round tuplet lengths). */
+function gapTolerance(st) { return st.divisions > 0 ? Math.min(8, Math.max(1, 1.5 * TPQ / st.divisions)) : 1; }
+
+/** Hidden rests that are exactly `gap` ticks long — members of tuplet `tup` when one is given. Null when no
+ *  notated lengths add up to it. */
+function gapRests(gap, tup, tol = 1) {
+  const f = tup ? tup.num / tup.den : 1;
+  const nominal = gap * f, snapped = Math.round(nominal / 30) * 30;
+  if (snapped < 30 || Math.abs(snapped - nominal) > tol * f) return null;
+  const ds = ticksToDurations(snapped);
+  if (ds.reduce((sum, d) => sum + baseTicks(d.base, d.dots), 0) !== snapped) return null;
+  return ds.map(d => { const r = makeRest(d.base, d.dots); r.hidden = true; if (tup) r.tuplet = { ...tup }; return r; });
+}
+
+/** Hidden rests for the stretch [have, cursor) of a voice in front of `ev`. Where the stretch lies inside a tuplet
+ *  whose other notes are on another staff, the rests belong to that tuplet; otherwise they are ordinary rests. */
+function gapFill(st, voiceKey, voice, have, cursor, ev, run) {
+  const tol = gapTolerance(st), out = [];
+  const owed = st.owed.get(voiceKey);
+  st.owed.delete(voiceKey);
+  if (owed && owed.until > have + 15 && owed.until <= cursor + 15) {            // first finish the tuplet that ended elsewhere
+    const rs = gapRests(owed.until - have, owed.tup, tol);
+    if (rs) { out.push(...rs); have = owed.until; }
+  }
+  if (cursor <= have + 15) return out;
+  const tup = ev.tuplet || null;
+  if (tup && run) {                                                              // plain up to where the tuplet began, tuplet rests from there
+    const start = Math.min(Math.max(run.start, have), cursor);
+    const from = start > have + 15 ? start : have;
+    const lead = from > have ? gapRests(from - have, null, tol) : [];
+    const inside = cursor > from + 15 ? gapRests(cursor - from, tup, tol) : [];
+    if (lead && inside) return out.concat(lead, inside);
+  }
+  const plain = gapRests(cursor - have, null, tol);
+  if (plain) return out.concat(plain);
+  const prev = out.length ? null : [...voice].reverse().find(e => !e.grace);
+  for (const t of [tup, prev && prev.tuplet]) {                                  // a tuplet without <tuplet> marks: all of the gap belongs to it
+    const rs = t ? gapRests(cursor - have, t, tol) : null;
+    if (rs) return out.concat(rs);
+  }
+  for (const d of ticksToDurations(cursor - have)) { const r = makeRest(d.base, d.dots); r.hidden = true; out.push(r); }   // nearest lengths
+  return out;
 }
 
 function readLyrics(el, ev) {
@@ -864,13 +1022,14 @@ function readHarmony(measure, el, cursor, scale) {
   if (!rootEl || mxKind === 'none') chord.text = kindText != null && kindText !== '' ? kindText : 'N.C.';
   else {
     const root = stepAlterText(txt(rootEl, 'root-step'), num(rootEl, 'root-alter', 0));
-    const degrees = kids(el, 'degree').map(d => ({ value: Math.round(num(d, 'degree-value', 0)), alter: Math.round(num(d, 'degree-alter', 0)), type: txt(d, 'degree-type') || 'alter' }));
+    const degrees = kids(el, 'degree').filter(d => attr(d, 'print-object') !== 'no').map(d => ({ value: Math.round(num(d, 'degree-value', 0)), alter: Math.round(num(d, 'degree-alter', 0)), type: txt(d, 'degree-type') || 'alter' }));
     const kind = (KIND_SHORT[mxKind] != null ? KIND_SHORT[mxKind] : '') + degreeSuffix(degrees);
     const bassEl = kid(el, 'bass');
     const bass = bassEl ? stepAlterText(txt(bassEl, 'bass-step'), num(bassEl, 'bass-alter', 0)) : '';
-    chord.text = root + (kindText != null ? kindText : kind) + (bass ? '/' + bass : '');
+    // <kind text="7"> is how the kind itself is shown; the <degree>s it does not already name come after it ("A7" + "b5")
+    const shown = kindText != null ? kindText + degreeSuffix(degrees.filter(d => !new RegExp(`(^|\\D)${d.value}(\\D|$)`).test(kindText))) : kind;
+    chord.text = root + shown + (bass ? '/' + bass : '');
     chord.root = root;
-    const shown = kindText != null ? kindText : kind;
     if (shown) chord.kind = shown;
     if (bass) chord.bass = bass;
   }
@@ -960,8 +1119,18 @@ function finalizeImport(ctx) {
     for (const sm of m.staves) for (const v of sm.voices) for (const ev of v) if (ev.notes && ev.notes.length > 1) ev.notes.sort((a, b) => midiOf(a) - midiOf(b));
   });
   score.spanners = score.spanners.filter(sp => sp.from && sp.to);
+  // MusicXML stores the sounding pitch of notes under an 8va / 8vb line; a ScoreDoc stores them as written on the staff
+  const ottava = ottavaShifts(score);
+  if (ottava.size) forEachPitched(score, (n, ev) => { const sh = ottava.get(ev.id); if (sh) n.octave -= sh / 12; });
   normalizeImported(score);
   validateScore(score, { repair: true });
+}
+
+/** Every pitched note head of the score (not percussion, not tablature frets). */
+function forEachPitched(score, fn) {
+  const kinds = [];
+  for (const part of score.parts) for (const st of part.staves) kinds.push(st.type || 'standard');
+  for (const m of score.measures) m.staves.forEach((sm, si) => { if (kinds[si] === 'percussion' || kinds[si] === 'tab') return; for (const v of sm.voices) for (const ev of v) for (const n of ev.notes || []) if (n.step && Number.isFinite(n.octave)) fn(n, ev); });
 }
 
 /** Drop information that equals JSE's automatic behaviour so imported scores stay editable:
@@ -1106,7 +1275,7 @@ export function exportMusicXML(score) {
 }
 
 function buildExportContext(score) {
-  const ctx = { startsAt: new Map(), endsAt: new Map(), voltaStart: new Map(), voltaEnd: new Map(), numbers: new Map(), used: {}, staffBase: [] };
+  const ctx = { startsAt: new Map(), endsAt: new Map(), voltaStart: new Map(), voltaEnd: new Map(), numbers: new Map(), used: {}, staffBase: [], ottava: ottavaShifts(score) };
   const push = (map, key, sp) => { if (!map.has(key)) map.set(key, []); map.get(key).push(sp); };
   for (const sp of score.spanners || []) {
     if (!sp.from || !sp.to) continue;
@@ -1144,9 +1313,22 @@ function writeHeader(w, score) {
   w.leaf('supports', null, { element: 'print', attribute: 'new-system', type: 'yes', value: 'yes' });
   w.leaf('supports', null, { element: 'print', attribute: 'new-page', type: 'yes', value: 'yes' });
   w.close();
+  // text styles (settings.textStyles): exact copy for JSE itself; other programs read the font attributes written below
+  const styles = normalizeTextStyles(s.textStyles);
+  if (styles) { w.open('miscellaneous'); w.leaf('miscellaneous-field', JSON.stringify(styles), { name: 'jse-text-styles' }); w.close(); }
   w.close();
   // <defaults>: tenths ↔ mm via scaling (10 tenths = one staff space)
   const sp = s.staffSpaceMm || 1.75, T = mm => mm * 10 / sp;
+  /** font-* attributes of one kind of text, or null when the score keeps the built-in look for it */
+  const fontAttrs = (key, emphasis = true) => {
+    if (!styles || !styles[key]) return null;
+    const st = resolveTextStyle(s, key), a = {};
+    if (st.family) a['font-family'] = st.family;
+    a['font-size'] = Math.round(spToPt(st.size, sp) * 10) / 10;
+    if (emphasis || st.bold) a['font-weight'] = st.bold ? 'bold' : 'normal';
+    if (emphasis || st.italic) a['font-style'] = st.italic ? 'italic' : 'normal';
+    return a;
+  };
   w.open('defaults');
   w.open('scaling'); w.leaf('millimeters', fmt(sp * 4)); w.leaf('tenths', 40); w.close();
   if (s.concertPitch) w.leaf('concert-score');
@@ -1161,22 +1343,25 @@ function writeHeader(w, score) {
   w.leaf('system-distance', fmt((s.systemGapSp == null ? 9 : s.systemGapSp) * 10));
   w.close();
   w.open('staff-layout'); w.leaf('staff-distance', fmt((s.staffGapSp == null ? 7 : s.staffGapSp) * 10)); w.close();
-  if (s.fonts && s.fonts.text) w.leaf('word-font', null, { 'font-family': s.fonts.text, 'font-size': 10 });
-  if (s.fonts && s.fonts.lyrics) w.leaf('lyric-font', null, { 'font-family': s.fonts.lyrics, 'font-size': 11 });
+  const wordFont = fontAttrs('text', false), lyricFont = fontAttrs('lyrics', false);
+  if (wordFont) w.leaf('word-font', null, wordFont);
+  else if (s.fonts && s.fonts.text) w.leaf('word-font', null, { 'font-family': s.fonts.text, 'font-size': 10 });
+  if (lyricFont) w.leaf('lyric-font', null, lyricFont);
+  else if (s.fonts && s.fonts.lyrics) w.leaf('lyric-font', null, { 'font-family': s.fonts.lyrics, 'font-size': 11 });
   w.close();
   // <credit> blocks for the title page
   const W = T(s.pageWidthMm), H = T(s.pageHeightMm), top = H - T(m.top);
-  const credit = (type, text, x, y, justify, valign, size) => {
+  const credit = (type, text, x, y, justify, valign, size, styleKey) => {
     if (!text) return;
     w.open('credit', { page: 1 }); w.leaf('credit-type', type);
-    w.leaf('credit-words', text, { 'default-x': fmt(x), 'default-y': fmt(y), justify, valign, 'font-size': size });
+    w.leaf('credit-words', text, { 'default-x': fmt(x), 'default-y': fmt(y), justify, valign, ...(fontAttrs(styleKey) || { 'font-size': size }) });
     w.close();
   };
-  credit('title', meta.title, W / 2, top, 'center', 'top', 24);
-  credit('subtitle', meta.subtitle, W / 2, top - T(10), 'center', 'top', 14);
-  credit('composer', meta.composer, W - T(m.right), top - T(20), 'right', 'bottom', 12);
-  credit('lyricist', meta.lyricist, T(m.left), top - T(20), 'left', 'bottom', 12);
-  credit('arranger', meta.arranger, W - T(m.right), top - T(26), 'right', 'bottom', 12);
+  credit('title', meta.title, W / 2, top, 'center', 'top', 24, 'title');
+  credit('subtitle', meta.subtitle, W / 2, top - T(10), 'center', 'top', 14, 'subtitle');
+  credit('composer', meta.composer, W - T(m.right), top - T(20), 'right', 'bottom', 12, 'composer');
+  credit('lyricist', meta.lyricist, T(m.left), top - T(20), 'left', 'bottom', 12, 'lyricist');
+  credit('arranger', meta.arranger, W - T(m.right), top - T(26), 'right', 'bottom', 12, 'composer');
   credit('rights', meta.copyright, W / 2, T(m.bottom), 'center', 'bottom', 8);
 }
 
@@ -1486,7 +1671,8 @@ function writeNote(w, score, ctx, part, staff, drums, ev, o) {
     else {
       let pitch = n;
       if (staff.type === 'tab' && n.string) { const tun = staff.tuning || ['E2', 'A2', 'D3', 'G3', 'B3', 'E4']; pitch = midiToPitch(nameToMidi(tun[tun.length - n.string]) + (n.fret || 0)); }
-      w.open('pitch'); w.leaf('step', pitch.step); if (pitch.alter) w.leaf('alter', pitch.alter); w.leaf('octave', pitch.octave); w.close();
+      const up = staff.type === 'tab' ? 0 : (ctx.ottava.get(ev.id) || 0) / 12;      // under an 8va line the file holds the sounding pitch
+      w.open('pitch'); w.leaf('step', pitch.step); if (pitch.alter) w.leaf('alter', pitch.alter); w.leaf('octave', pitch.octave + up); w.close();
     }
     if (!ev.grace) w.leaf('duration', toDiv(ticks));
     if (n && n.tieEnd) w.leaf('tie', null, { type: 'stop' });

@@ -55,6 +55,7 @@ export class KeyboardController {
     if (mod && (k === '0' || k === ']')) { stop(); this.view.fit('width'); return; }
     if (mod && k === '[') { stop(); this.view.fit('page'); return; }
     if (mod && shift && K === 'G') { stop(); this.ui.goToMeasureDialog?.(); return; }
+    if (mod && k === ',') { stop(); this.ui.settings?.(); return; }                                // settings window
     if (alt && shift && digit && +digit >= 1 && +digit <= 4) { stop(); this.ui.paletteAction('voice', { v: +digit - 1 }); this.ui.toast?.(`${digit}성부(레이어 ${digit})`, 'info'); return; }
     if (k === ' ' && !mod) { stop(); if (!e.repeat) { this.spaceHeld = true; this.spaceUsed = false; } return; }
     if (k === 'Escape') { stop(); this.heldKey = null; if (tool !== 'select') app.setTool('select'); else app.clearSelection(); this.ui.closePopovers?.(); return; }

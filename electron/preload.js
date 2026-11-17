@@ -55,6 +55,17 @@ ipcRenderer.on('scoresnap:menu', (_event, action, payload) => {
   menuListeners.forEach((cb) => safeCall(cb, String(action), payload));
 });
 
+/* ---- close confirmation: main asks before the window closes (Alt+F4, taskbar) once the app subscribed ---- */
+const closeListeners = [];
+ipcRenderer.on('scoresnap:close-request', () => {
+  ipcRenderer.invoke('scoresnap:close-ack').catch(() => {});
+  if (!closeListeners.length) {
+    ipcRenderer.invoke('scoresnap:win', 'close').catch(() => {});
+    return;
+  }
+  closeListeners.forEach((cb) => safeCall(cb));
+});
+
 function cleanSaveOpts(opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
   return {
@@ -131,6 +142,46 @@ const api = {
   },
   showInFolder(filePath) {
     return ipcRenderer.invoke('scoresnap:show-in-folder', String(filePath || ''));
+  },
+
+  // ---- settings window: desktop options (설정 › Windows 앱); every call resolves, none is required by the web app ----
+  getAppSettings() {
+    return ipcRenderer.invoke('scoresnap:app-settings-get');
+  },
+  setAppSettings(partial) {
+    const p = partial && typeof partial === 'object' ? partial : {};
+    const clean = {};
+    for (const k of ['rememberBounds', 'startMaximized', 'disableGpu']) if (typeof p[k] === 'boolean') clean[k] = p[k];
+    if (typeof p.defaultDir === 'string') clean.defaultDir = p.defaultDir;
+    return ipcRenderer.invoke('scoresnap:app-settings-set', clean);
+  },
+  chooseFolder(opts) {
+    const defaultPath = opts && typeof opts.defaultPath === 'string' ? opts.defaultPath : '';
+    return ipcRenderer.invoke('scoresnap:choose-folder', { defaultPath });
+  },
+  openSystemSettings(what) {
+    return ipcRenderer.invoke('scoresnap:open-system-settings', String(what || ''));
+  },
+  showSettingsFile() {
+    return ipcRenderer.invoke('scoresnap:show-settings-file');
+  },
+  relaunch() {
+    return ipcRenderer.invoke('scoresnap:relaunch');
+  },
+  setZoomFactor(factor) {
+    return ipcRenderer.invoke('scoresnap:set-zoom', Number(factor) || 1);
+  },
+  setKeepScreenOn(on) {
+    return ipcRenderer.invoke('scoresnap:keep-awake', !!on);
+  },
+  getAppInfo() {
+    return ipcRenderer.invoke('scoresnap:app-info');
+  },
+  /** The web app wants to be asked before the window closes; it answers with windowControls.close(). */
+  onCloseRequest(cb) {
+    if (typeof cb !== 'function') return;
+    closeListeners.push(cb);
+    ipcRenderer.invoke('scoresnap:close-guard', true).catch(() => {});
   },
 };
 

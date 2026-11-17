@@ -1,12 +1,19 @@
 // Export: PNG / JPG / SVG / PDF (raster, via pdf-lib) / MIDI / MusicXML / print.
 import { writeMidi } from './midi.js';
+import { embedFontsInSvg, fontFaceCss, jseFamiliesIn } from '../fonts.js';
 
 const MM_PER_IN = 25.4;
 
-/** Render one page SVG string to a canvas at `dpi`. */
+/**
+ * Render one page SVG string to a canvas at `dpi`.
+ * The SVG is drawn through an <img>, which cannot see the fonts loaded into the document: the downloaded
+ * "JSE 글꼴" the page uses are embedded as @font-face data: URLs first (fonts installed on the device work as they are).
+ */
+/** A page as it goes on paper or into a file: what is marked hidden (drawn faintly while editing) is left out. */
+export function printableSvg(svg) { return svg.replace('.score-page .hidden{opacity:0.25}', '.score-page .hidden{display:none}'); }
 export async function rasterizePage(page, { dpi = 300, spMm = 1.75, background = '#ffffff', transparent = false } = {}) {
   const wPx = Math.round(page.width * spMm / MM_PER_IN * dpi), hPx = Math.round(page.height * spMm / MM_PER_IN * dpi);
-  const svg = page.svg.replace('<svg ', `<svg width="${wPx}" height="${hPx}" `);
+  const svg = embedFontsInSvg(printableSvg(page.svg)).replace('<svg ', `<svg width="${wPx}" height="${hPx}" `);
   const svgNoBg = transparent ? svg.replace(/<rect class="page-bg"[^>]*\/>/, '') : svg;
   const blob = new Blob([svgNoBg], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -64,7 +71,8 @@ export async function exportPdf(layout, score, { dpi = 300, pages = null, onProg
 export function exportSvg(layout, pageIndex = 0) {
   const p = layout.pages[pageIndex];
   const wMm = p.width * layout.spMm, hMm = p.height * layout.spMm;
-  const svg = p.svg.replace('<svg ', `<svg width="${wMm.toFixed(2)}mm" height="${hMm.toFixed(2)}mm" `);
+  // a stand-alone file: carries the downloaded fonts it uses (unmodified, as data: URLs) so it looks the same anywhere
+  const svg = embedFontsInSvg(printableSvg(p.svg)).replace('<svg ', `<svg width="${wMm.toFixed(2)}mm" height="${hMm.toFixed(2)}mm" `);
   return new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + svg], { type: 'image/svg+xml' });
 }
 export function exportMidiBlob(score) { return new Blob([writeMidi(score)], { type: 'audio/midi' }); }
@@ -81,9 +89,12 @@ export function safeFileName(name, ext) {
 export function printLayout(layout) {
   const w = window.open('', '_blank');
   if (!w) return false;
-  const pages = layout.pages.map(p => `<div class="pg">${p.svg}</div>`).join('');
+  const pages = layout.pages.map(p => `<div class="pg">${printableSvg(p.svg)}</div>`).join('');
   const wMm = layout.pages[0].width * layout.spMm, hMm = layout.pages[0].height * layout.spMm;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>인쇄</title><style>@page{size:${wMm}mm ${hMm}mm;margin:0}body{margin:0}.pg{width:${wMm}mm;height:${hMm}mm;page-break-after:always;overflow:hidden}.pg svg{width:100%;height:100%;display:block}</style></head><body>${pages}<script>setTimeout(()=>{window.print();},300)</script></body></html>`);
+  // the print window is another document: give it the downloaded fonts once (all pages share them)
+  const families = new Set(); for (const p of layout.pages) for (const f of jseFamiliesIn(p.svg)) families.add(f);
+  const fontCss = fontFaceCss([...families]);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>인쇄</title><style>${fontCss}@page{size:${wMm}mm ${hMm}mm;margin:0}body{margin:0}.pg{width:${wMm}mm;height:${hMm}mm;page-break-after:always;overflow:hidden}.pg svg{width:100%;height:100%;display:block}</style></head><body>${pages}<script>(document.fonts&&document.fonts.ready?document.fonts.ready:Promise.resolve()).then(()=>setTimeout(()=>{window.print();},300))</script></body></html>`);
   w.document.close();
   return true;
 }

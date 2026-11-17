@@ -1,6 +1,6 @@
 # JSE — 작업 인계 문서 (Handoff)
 
-> 갱신: 2026-11-04 10:40 KST (v1.0.8 — 사진 인식 학습은 사용자 요청으로 6차에서 종료). 다음 모델/세션은 이 문서 → `README.md` → `SPEC.md` → `RELEASING.md` 순서로 읽으면 됩니다.
+> 갱신: 2026-11-18 KST (v1.1.0 — 글꼴 · 다른 악보 프로그램 파일 · 설정, §5). 다음 모델/세션은 이 문서 → `README.md` → `SPEC.md` → `RELEASING.md` 순서로 읽으면 됩니다.
 > 소스: **GitHub `omokdie/jse` (공개, main)** — 이 저장소가 원본입니다. 클라우드 세션의 작업 폴더는 `/home/claude/scoresnap`(origin = 위 저장소).
 
 ## 1. 사용자 요구사항 (반영 상태)
@@ -28,6 +28,10 @@
 | 19 | GitHub 설정 | ✅ 저장소·Pages·Actions·Android 정식 서명 키(Secrets) — v1.0.2 APK부터 정식 키(지문 55:8D:…:10:55) |
 | 20 | MP3(음원)로 악보 만들기 | ✅ `audio/*` + `ui/audioflow.js` (파일 메뉴 · 상단 '음원으로 악보' · 도구 막대 · 시작 화면 · 파일 열기/끌어 놓기 · 휴대폰 보조 버튼). Basic Pitch 그래프를 순수 JS+WASM SIMD로 실행. 합성 보류 세트 음표 F1 멜로디 93 % / 피아노 84 %, 악보 음표(음높이+위치) 57 % / 75 % (빠르기를 맞힌 경우 83 % / 91 %), 4분 곡 약 11초. 학습·평가: `tools/audio/README.md` |
 
+| 21 | 가사·제목·코드의 글꼴 크기와 종류 변경 | ✅ v1.1.0 — 악보 → 글꼴…(휴대폰 ⋯ 메뉴), 글자 오른쪽 클릭 → 글꼴 바꾸기…, 속성 패널. 글자 종류 11가지 × 글꼴·크기(pt)·굵게·기울임, 글자 하나만 따로, 새 악보 기본값. 글꼴: 기본 · 이 기기의 글꼴 · JSE 글꼴 7종(처음 쓸 때 내려받음). SPEC §2b, `tools/fonts/README.md` |
+| 22 | Sibelius·MuseScore·NWC 등 다른 프로그램 파일 열기 + 각 프로그램 확장자로 저장 | ✅ v1.1.0 — MuseScore `.mscz/.mscx` 열기·저장, NWC `.nwc/.nwctxt` 열기·저장(1.75 저장은 실험적). 🔶 Sibelius `.sib`는 직접 읽고 쓸 수 없음(비공개·암호화 형식) → MusicXML 경유 안내 + "Sibelius용 (MusicXML)" 내보내기. SPEC §5d–5f, §5 아래 검증 결과 |
+| 23 | 설정을 더 자세하고 편하게, 플랫폼별로 | ✅ v1.1.0 — 검색되는 설정 창(약 70개 항목, 13개 구역), Windows 앱·Android 앱·웹 앱 전용 구역. SPEC §9, `tools/settings/README.md` |
+
 결정 사항: 확장자는 `.ssnap` 유지(`.jse`는 Windows JScript 확장자라 사용 불가). 저장소는 공개(무료 Pages + 자동 업데이트에 필요).
 
 ## 2. 구조 요약
@@ -36,17 +40,22 @@
 - 편집 상호작용: `editor/tools.js`(도구 정의·입력 위치 계산·모양/아티큘레이션/표현 적용), `editor/pointer.js`(도구별 마우스/터치), `editor/keyboard.js`(피날레식 단축키·메타툴). 묶음 버튼: `ui/flyout.js` + `ui/groups.js`, 팔레트 `ui/palette.js`.
 - 인식: `omr/omr.js`(auto: 기존 파이프라인 → 신뢰도 0.9 미만이면 사진 파이프라인도 실행해 더 나은 결과), 단계별 모듈 `preprocess/staves/dewarp/barlines/heads/classifiers/lyrics/hangul.js`, 학습된 모델 `omr/models/heads.js`(음표머리), `omr/hangul-weights.js`(한글). 흐름 UI `ui/omrflow.js`.
 - 음원: `audio/engine.js`(디코드→분석→정리), `audio/basicpitch.js`+`tfgraph.js`+`wasmconv.js`(Basic Pitch 실행), `audio/transcribe.js`(빠르기·박자·조성·양자화·코드 → ScoreDoc), `audio/keymodel.js`, 모델 `vendor/basic-pitch/`. 흐름 UI `ui/audioflow.js`.
-- 입출력: `io/ssnap.js`, `io/musicxml.js`, `io/musx.js`(Finale), `io/midi.js`, `io/export.js`, `io/storage.js`.
+- 입출력: `io/ssnap.js`(+ `sniffFile`, `FOREIGN_SCORE_FORMATS`), `io/musicxml.js`, `io/musx.js`(Finale), `io/mscz.js`(MuseScore), `io/nwc.js` + `io/nwc-*.js`(NWC), `io/midi.js`(재생 목록 + MIDI), `io/export.js`, `io/storage.js`. 다른 프로그램 파일 열기 흐름 `ui/importflow.js`, 내보내기 대화상자 `ui/exportdlg.js`.
+- 글꼴: `model/textstyles.js`(글자 종류·기본값·pt↔sp) → `engrave/styles.js` → 조판, `fonts.js`(기기 글꼴·JSE 글꼴 내려받기·IndexedDB·SVG에 담기), `ui/textstyle.js`. 글꼴 파일 `app/fonts/web/`는 **GitHub Pages에서만** 제공(설치 파일·APK·OTA 묶음·서비스 워커 캐시에는 없음).
+- 설정: `settings.js`(항목 목록·플랫폼 조건·기본값·이전 값 옮기기) + `ui/settings.js`. 값은 `localStorage['ssnap.settings']`, Windows 셸은 필요한 값의 사본을 자기 `settings.json`에 둠.
 - 배포: `.github/workflows/` — `build-web.yml`(main push → Pages), `release.yml`(main 에 새 버전 → 태그·릴리스·exe·apk 자동). 이 클라우드 세션에서는 **태그 push가 막혀 있음**(브랜치 push만 가능) → 버전 올려 main 에 push 하는 방식으로 릴리스.
 - 미리보기: `node tools/build-demo.mjs` → `dist/demo` → claude.ai 아티팩트 slug `91bc8359-75b7-48e0-a9d8-4bd48d714ddb`.
 
 ## 3. 테스트 / 검증 방법
 
 ```bash
-node --test tools/tests/*.test.js                  # 27개 통과 (편집·MusicXML·한글/가사 인식·음원)
+node --test tools/tests/*.test.js                  # 112개 통과 (편집·MusicXML·MuseScore·NWC·글꼴·설정·재생·셸·한글/가사 인식·음원)
 python3 -m http.server 8765 -d app                  # 앱 실행
 node tools/e2e/shot.mjs http://localhost:8765/ out.png desktop|mobile|tablet|tablet-portrait|android-tablet [script.js]
 node tools/musx/check.mjs <Finale 파일/폴더>        # Finale 가져오기 일괄 점검
+node tools/mscz/check.mjs <폴더> [--export]         # MuseScore 가져오기(+ 내보내고 다시 읽기). 실제 MuseScore 대조: tools/mscz/README.md (roundtrip.mjs, compare.mjs)
+node tools/nwc/check.mjs <폴더> [--export]          # NWC 가져오기(+ 세 가지 형식으로 내보내고 다시 읽기)
+node tools/settings/…  ·  tools/fonts/e2e/…        # 설정·글꼴 브라우저 점검 스크립트(shot.mjs 로 실행, 각 README)
 node tools/omr/stage_eval.mjs --dir tools/omr/corpus/eval_photo   # 사진 인식 정확도 (eval_clean, base, aug 도)
 node tools/omr/run_eval.mjs --dir tools/omr/corpus_ko --report tools/omr/eval_report_lyrics.md   # 가사 인식
 node tools/audio/eval.mjs …                        # 음원 → 악보 평가 (명령은 tools/audio/README.md)
@@ -89,6 +98,42 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 * holdout6에서의 향상은 작습니다(+0.3, 저해상도 +1.8). 이 세트에는 조표 없는 곡이 많기 때문입니다.
 * 상세와 다음에 할 일: `tools/omr/IMPROVEMENTS.md` Round 6와 맨 끝 'Where to continue'(유형별 현황, 막는 요인, 데이터·모델·평가 재현 명령, 깨끗한 보류 세트 없음 → 다음엔 holdout7을 새로 만들 것).
 
+## 5. v1.1.0 — 글꼴 · 다른 악보 프로그램 파일 · 설정 (2026-11-18)
+
+**확인한 것 / 확인하지 못한 것**
+
+| 항목 | 확인한 방법과 결과 | 확인하지 못한 것 |
+|---|---|---|
+| MuseScore 가져오기 | 실제 파일 4,396개(MuseScore 2~4 시험 파일·예제, OpenScore 가곡 863곡): 4,337개 가져옴, 59개는 MuseScore 1.x라 안내 후 거절, 실패 0. 가곡 863곡은 MuseScore가 직접 내보낸 MusicXML과 음표 대조 | — |
+| MuseScore 저장 | 내보낸 1,879개 악보를 **실제 MuseScore 3.6.2 / 4.5.2**(이 작업 환경에서 화면 없이 실행)로 열고 다시 MusicXML로 받아 대조: 3.6.2는 1,879개 모두 열림(음표 99.94 %, 가사 99.98 % 일치), 4.5.2는 1,870개 열림(음표 99.97 %, 가사 100 %) | 4.5.2가 "Incomplete measure"로 거절한 9개 — 부분마다 박자가 다른 곡 6개(MusicXML에서 읽은 것), 겹잇단음표 등 2곡의 3개. MuseScore 4 창에서는 경고 후 "무시하고 열기"로 열림(창에서 직접 눌러 보지는 못함) |
+| NWC 가져오기 | 실제 파일 794개(1.55~2.75, nwctxt; 한국어 아카펠라 악보 533개) 모두 읽음. 다른 공개 판독기 2종과 대조(한 곳은 1,059,403개 개체 중 320개 차이), 한글 CP949 자동 판별 104개 | — |
+| NWC 저장 | `.nwctxt` · `.nwc` 2.75 · `.nwc` 1.75 모두 794개 악보 내보내기 성공, 다시 읽어 대조. 2.75·nwctxt는 공개 판독기 3종(nwc2musicxml, nwc2ly, nwc-viewer)이 읽음 | **NoteWorthy Composer 프로그램 자체로는 열어 보지 못함**(구할 수 없었음). 특히 1.75 형식은 판독기가 해석하지 않는 바이트를 흔한 값으로 채워 "실험적"으로 표시 |
+| Sibelius | `.sib`는 비공개·암호화 형식이라 직접 지원 불가 → 열려고 하면 Sibelius에서 MusicXML로 내보내는 방법을 안내, 저장은 "Sibelius용 (MusicXML)" | 실제 Sibelius로 여는 것 |
+| MusicXML 가져오기(다른 프로그램의 공통 경로) | 이번에 고침(아래). MuseScore 원본과 대조: 같은 자리·같은 음 99.36 % → 99.93 %, 완전히 같은 곡 753 → 833 / 842 | 부분마다 박자가 다른 곡(MusicXML은 부분별 박자, JSE는 마디별 하나) |
+| 글꼴 | 단위 테스트 20개 + 브라우저(대화상자·취소·실행 취소·내려받기·오프라인·PNG/JPG/PDF/SVG에 글꼴 담기). 글꼴을 안 바꾼 악보의 조판 결과는 v1.0.8과 바이트 단위로 같음(42곡) | Electron 안의 기기 글꼴 목록(`queryLocalFonts`), github.io에서 실제 내려받기(배포 후 확인), 실제 Android 기기 |
+| 설정 | 단위 테스트 23개(항목·이전 값 옮기기·Electron 셸·Android 심) + 브라우저(PC·휴대폰·태블릿 화면, 검색, 저장·복원, 가짜 Windows/Android 셸) | **실제 Windows·Android 빌드에서의 동작**(창 위치 기억, 닫기 확인, 화면 켜짐, 전체 화면, 방향, 진동, 뒤로 버튼) — CI 빌드가 통과하는 것까지만 확인. 점검표: `tools/settings/README.md` "What main must check in the CI builds" |
+
+**이번에 함께 고친 공용 코드** (다른 프로그램 파일을 대량으로 대조하다 드러난 것, 테스트 `musicxml.test.js` · `playback.test.js`)
+* MusicXML 가져오기: 보표를 넘나드는 잇단음표에서 빈자리를 보통 쉼표로 채워 뒤 음표가 밀리던 문제, 잇단음표가 "열린 채" 남아 보통 음표에 6:4 등이 붙던 문제, 한 보표에 XML 성부가 5개 이상일 때 넷째 성부에 몰아넣던 문제, `sf`·`sffz`·`rf` 등 셈여림과 코드 기호의 변화음(♭5 등)이 빠지던 문제.
+* 8va/8vb 선 아래 음표: ScoreDoc은 **적힌 음높이**로 저장(재생·MIDI·NWC 저장이 옥타브를 더함). MusicXML은 실제 음높이로 저장하므로 가져올 때·내보낼 때 변환. ⚠ v1.0.8 이하에서 8va가 있는 MusicXML을 가져와 저장한 `.ssnap`은 그 구간이 한 옥타브 높게 저장돼 있음(화면은 전과 같고 재생이 한 옥타브 더 높아짐) → 원본 MusicXML을 다시 가져오면 됨.
+* 재생·MIDI: 못갖춘마디를 온 마디 길이로 재생해 쉬는 시간이 생기던 문제(이제 가장 긴 성부 길이만큼), 메트로놈은 마디 기준으로 다시 계산(`pb.clicks`), 이조 악기는 항상 적힌 음 + 이조 값으로 소리(전에는 MusicXML로 가져온 이조 악기가 이조 없이 재생됨).
+* 숨긴 음표·쉼표(`hidden`): 화면에서는 흐리게, **PDF·PNG·JPG·SVG·인쇄에서는 안 보이게**(전에는 내보낸 파일에도 흐리게 찍힘).
+* Android 파일 고르기: Android가 MIME을 모르는 확장자(.ssnap·.mscz·.nwc 등)가 섞인 목록은 "모든 파일"로 엶(`native.js pickerAccept`) — 그렇지 않으면 그런 파일이 흐리게 표시돼 고를 수 없음(실기기 확인은 못 함).
+
+**배포 관련 결정**
+* `release.json`의 `androidMinNative`를 1.1.0으로 올림: Android 네이티브 코드(설정용 플러그인 메서드, 진동 권한, 파일 연결)가 바뀌어, 이전 APK 사용자는 앱이 새 APK 설치를 안내함(같은 서명 키라 덮어 설치).
+* Windows: MuseScore·NWC 파일은 **연결 프로그램 목록에만** JSE를 올리고 기본 프로그램은 바꾸지 않음(`electron/build/installer.nsh`). `.ssnap`·`.musx`는 전과 같이 JSE로 열림.
+* JSE 글꼴 7종(SIL OFL 1.1)은 원본 그대로(이름·내용 수정 없이 WOFF 포장만) `app/fonts/web/`에 두고 Pages에서만 제공. 설치 파일·APK 크기는 그대로.
+
+**알려진 한계 / 다음에 할 만한 것**
+* NWC: 실제 NoteWorthy Composer(특히 1.75)에서 열어 보기. 셋잇단 외 잇단음표·8va 선·3성부 이상은 근사.
+* MuseScore 4가 거절하는 9개 유형(위 표): 길이가 딱 맞지 않는 성부를 MuseScore 4가 받아들이는 방식으로 채우기.
+* MusicXML: 부분마다 다른 박자, 5성부 이상이 동시에 울리는 보표.
+* 조판: 2성부일 때 기둥 방향을 성부 번호로만 정함(`ev.stem` 무시), 보표를 넘는 음표(크로스 스태프)는 원래 보표에 표시.
+* MIDI 가져오기(파일 열기에서 `.mid`는 아직 안내만), Dorico·Encore·Guitar Pro 등은 MusicXML 경유 안내만.
+* 설정: 묶음 버튼(`ui/flyout.js`)에는 길게 누르기 시간·진동 설정이 적용되지 않음. 설명 문구는 한국어만.
+* 2026-11-17 작업 중 MuseScore 담당 보조 작업이 사용량 한도로 중단됨 — 코드·테스트·README는 끝난 상태였고, 최종 대조는 본 세션이 다시 실행해 위 숫자를 얻음.
+
 남은 일(우선순위):
 1. 사진 인식(목표 90%; 6차 후 holdout6 사진 음높이 88.3%·박자 87.1%, 스캔 95.5 · 평평 93.5 · 휜 90.9 · 저해상도 68.2%, 더 어려운 holdout5 사진 77.6%). 학습은 6차로 멈춤 — 이어서 한다면 `tools/omr/IMPROVEMENTS.md` 'Where to continue'부터. 남은 순서: 저해상도 사진(잃은 음의 절반, 음높이 45%) → 휜/평평 사진의 마디 안 임시표(48%)·화음 → 조표(87%) → 음자리표 → Leland 글꼴(holdout5 41%) → 16/32분·셋잇단·마디선. 상세: `tools/omr/IMPROVEMENTS.md`.
 2. 가사: 영어 가사(단어·하이픈), 오선 위 가사, 10px 이하 가는 글씨(이진화에서 사라짐), 줄 단위 언어 모델.
@@ -96,3 +141,4 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 4. Finale 가져오기: 2차에서 표현 텍스트 연결 버그(textIDKey → textBlock → textID) 수정, 여러 보표에 같은 템포·표현 중복 제거, 보표 지정 표현은 그 보표 음표에. 남은 것: 빈 마디 보표의 표현 위치.
 5. 음원 → 악보: 실제 녹음+정렬된 악보로 평가, 빠르기 절반/두 배 판단 개선(다운비트 단서, 박자 두드리기), 보표당 두 번째 성부(지속음), 마이크 녹음, 멜로디만 있는 입력의 코드 추정.
 6. 세부: 운지 번호 전용 렌더링, 복잡한 반복 재생, MIDI 가져오기, 가사 아래 이음줄 충돌 회피.
+7. v1.1.0의 남은 것: §5 "알려진 한계" 목록, 실제 Windows·Android 기기에서 설정 항목 점검.

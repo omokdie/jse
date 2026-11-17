@@ -13,7 +13,9 @@ function getCtx() {
   return ctx;
 }
 const cache = new Map();
-/** Width of `str` drawn at font-size `size` (sp) → width in sp. */
+/** Forget every measured width — call after a web font finished loading (the same family now measures differently). */
+export function clearTextWidthCache() { cache.clear(); }
+/** Width of `str` drawn at font-size `size` (sp) → width in sp. `family` is a CSS font-family list. */
 export function textWidth(str, size, bold = false, italic = false, family = TEXT_FONT) {
   if (!str) return 0;
   const key = `${size}|${bold}|${italic}|${family}|${str}`;

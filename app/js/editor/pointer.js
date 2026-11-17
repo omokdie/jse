@@ -25,6 +25,7 @@ export class PointerController {
     c.addEventListener('contextmenu', e => {
       e.preventDefault();
       if (this.suppressMenu) { this.suppressMenu = false; return; }
+      if (this.fingerLocked) return;   // 펜 전용 입력: no long-press menu for fingers
       const hit = this.hitAt(e);
       // macOS/Linux fire this on press: wait for the release so a right-button drag can pan instead
       if (this.drag?.right) { this.drag.menuPending = { x: e.clientX, y: e.clientY, hit }; return; }
@@ -38,8 +39,15 @@ export class PointerController {
     const hit = this.view.hitTest(pt.page, pt.x, pt.y, opts); if (hit) { hit.page = pt.page; hit.px = pt.x; hit.py = pt.y; }
     return hit;
   }
+  /** 펜 전용 입력 is on and the last press came from a finger (dblclick / contextmenu carry no pointer type). */
+  get fingerLocked() { return !!this.app.settings.penOnly && this.lastPointerType === 'touch'; }
+  /** 설정 › 편집·입력 › 길게 누르기 시간 */
+  get longPressMs() { const v = Number(this.app.settings.longPressMs); return v >= 200 && v <= 2000 ? v : 550; }
   onWheel(e) {
-    if (e.ctrlKey || e.metaKey) { e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 1 / 1.1; this.view.zoomBy(f, { x: e.clientX, y: e.clientY }); }
+    // 설정 › 편집·입력 › 마우스 휠 동작 — 'scroll': wheel scrolls, Ctrl+wheel zooms · 'zoom': wheel zooms, Shift+wheel scrolls
+    const zoomMode = this.app.settings.wheelMode === 'zoom';
+    if (e.ctrlKey || e.metaKey || (zoomMode && !e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX))) { e.preventDefault(); const f = e.deltaY < 0 ? 1.1 : 1 / 1.1; this.view.zoomBy(f, { x: e.clientX, y: e.clientY }); }
+    else if (zoomMode && e.shiftKey) { e.preventDefault(); const d = e.deltaY || e.deltaX; if (this.app.viewMode === 'horizontal') this.container.scrollLeft += d; else this.container.scrollTop += d; }
     else if (this.app.viewMode === 'horizontal' && !e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); this.container.scrollLeft += e.deltaY; }
   }
   /** Which palette item applies: a held metatool key wins over the palette selection (Finale). */
@@ -55,10 +63,15 @@ export class PointerController {
 
   // ------------------------------------------------------------------ down
   onDown(e) {
+    this.lastPointerType = e.pointerType;
     // right button (any tool): drag = hand grabber, click = context menu (Finale)
     if (e.button === 2) { this.drag = { kind: 'pan', x: e.clientX, y: e.clientY, sl: this.container.scrollLeft, st: this.container.scrollTop, right: true }; this.container.setPointerCapture?.(e.pointerId); return; }
     if (e.button === 1) { e.preventDefault(); this.drag = { kind: 'pan', x: e.clientX, y: e.clientY, sl: this.container.scrollLeft, st: this.container.scrollTop }; return; }
-    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    // 설정 › 편집·입력 › 펜 전용 입력: the pen edits, fingers only move / zoom the page; a palm resting while the pen writes is ignored
+    const penOnly = !!this.app.settings.penOnly;
+    if (penOnly && e.pointerType === 'pen') { this.penId = e.pointerId; this.pointers.clear(); this.pinch = null; this.drag = null; }
+    else if (penOnly && e.pointerType === 'touch' && this.penId != null) return;
+    if (!(penOnly && e.pointerType === 'pen')) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     if (this.pointers.size === 2) { // pinch start
       const [a, b] = [...this.pointers.values()];
       this.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: this.app.zoom, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
@@ -76,6 +89,7 @@ export class PointerController {
     this.lastTap = now; this.lastHit = hit;
     this.ui.hideContextMenu?.();
     const pan = (extra = {}) => { this.drag = { kind: 'pan', x: e.clientX, y: e.clientY, sl: this.container.scrollLeft, st: this.container.scrollTop, touch: isTouch, ...extra }; };
+    if (penOnly && isTouch) { pan({ penOnly: true }); return; }
 
     switch (tool) {
       case 'entry': return this.downEntry(e, hit, isTouch, pan);
@@ -100,12 +114,12 @@ export class PointerController {
       app.select({ type: 'events', ids, noteIndex: single ? hit.noteIndex : undefined });
       if (dbl) { this.ui.onDoubleTapEvent?.(hit); return; }
       // potential pitch drag (vertical) — commit on release
-      this.drag = { kind: 'pitch', hit, x: e.clientX, y: e.clientY, steps: 0, touch: isTouch, started: false, longPress: isTouch ? setTimeout(() => this.longPress(e, hit), 550) : null };
+      this.drag = { kind: 'pitch', hit, x: e.clientX, y: e.clientY, steps: 0, touch: isTouch, started: false, longPress: isTouch ? setTimeout(() => this.longPress(e, hit), this.longPressMs) : null };
       return;
     }
-    if (hit && hit.kind === 'text') { app.select({ type: 'text', ref: hit.ref }); if (dbl || (!isTouch && e.detail === 2)) this.ui.editText?.(hit.ref); this.drag = { kind: 'none', touch: isTouch, longPress: isTouch ? setTimeout(() => this.longPress(e, hit), 550) : null }; return; }
+    if (hit && hit.kind === 'text') { app.select({ type: 'text', ref: hit.ref }); if (dbl || (!isTouch && e.detail === 2)) this.ui.editText?.(hit.ref); this.drag = { kind: 'none', touch: isTouch, longPress: isTouch ? setTimeout(() => this.longPress(e, hit), this.longPressMs) : null }; return; }
     if (hit && (hit.kind === 'staff' || hit.kind === 'measure')) {
-      if (isTouch) { pan({ hit, longPress: setTimeout(() => this.longPress(e, hit), 550), tapSelect: true }); return; }
+      if (isTouch) { pan({ hit, longPress: setTimeout(() => this.longPress(e, hit), this.longPressMs), tapSelect: true }); return; }
       const sel = app.selection;
       // drag a selected region onto other measures = copy (Alt = insert), like Finale
       if ((sel.type === 'measure' || sel.type === 'range') && !e.shiftKey) {
@@ -130,6 +144,8 @@ export class PointerController {
   downEntry(e, hit, isTouch, pan) {
     if (!hit || (hit.kind !== 'staff' && hit.kind !== 'note' && hit.kind !== 'rest' && hit.kind !== 'event')) { pan(); return; }
     if (isTouch || e.pointerType === 'pen') {
+      // 설정 › 편집·입력 › 누르고 밀어 입력 (off): a tap places the note right where it was touched, dragging scrolls
+      if (this.app.settings.touchSlideInput === false) { pan({ hit, tapEntry: true }); return; }
       // touch/pen: press → slide up/down to choose the pitch (ghost follows) → release to place; sideways = scroll
       this.drag = { kind: 'touchInput', hit, x: e.clientX, y: e.clientY, sl: this.container.scrollLeft, st: this.container.scrollTop, steps: 0 };
       this.showEntryGhost(hit, 0, false);
@@ -201,15 +217,28 @@ export class PointerController {
   longPress(e, hit) {
     if (!this.drag) return;
     this.drag.longPressed = true;
-    if (navigator.vibrate) navigator.vibrate(10);
+    this.app.haptic?.(10);
     if (hit?.eventId && this.app.selection.type !== 'events') this.app.select({ type: 'events', ids: [hit.eventId] });
     else if (hit?.kind === 'staff' || hit?.kind === 'measure') this.app.select({ type: 'measure', mi: hit.mi, si: hit.si });
     this.ui.showContextMenu(e.clientX, e.clientY, hit);
     this.drag = null;
+    this.swallowReleaseTap();
+  }
+  /** The finger that opened the menu is still down. With a short 길게 누르기 시간 the browser may still turn its
+   *  release into a tap — which would "click" the menu item that just appeared under it. Eat that one click. */
+  swallowReleaseTap() {
+    const stop = ev => { ev.stopPropagation(); ev.preventDefault(); };
+    let timer = null;
+    const off = () => { clearTimeout(timer); document.removeEventListener('click', stop, true); document.removeEventListener('pointerup', lifted, true); document.removeEventListener('pointercancel', lifted, true); };
+    const lifted = () => { clearTimeout(timer); timer = setTimeout(off, 350); };   // the click follows the pointerup at once
+    document.addEventListener('click', stop, true);
+    document.addEventListener('pointerup', lifted, true); document.addEventListener('pointercancel', lifted, true);
+    timer = setTimeout(off, 1500);   // held on: no tap will come any more
   }
 
   // ------------------------------------------------------------------ move
   onMove(e) {
+    if (this.penId != null && e.pointerId !== this.penId && e.pointerType === 'touch') return;   // palm while the pen writes
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     if (this.pinch && this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
@@ -225,7 +254,7 @@ export class PointerController {
       case 'touchInput': {
         if (Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(dy) * 1.2) { this.view.setGhost(null); this.ui.hidePitchHint?.(); Object.assign(d, { kind: 'pan' }); return; }
         const steps = Math.round(-dy / Math.max(4, this.view.pxPerSp / 2));
-        if (steps !== d.steps) { d.steps = steps; this.showEntryGhost(d.hit, steps, true); if (navigator.vibrate) navigator.vibrate(4); }
+        if (steps !== d.steps) { d.steps = steps; this.showEntryGhost(d.hit, steps, true); this.app.haptic?.(4); }
         return;
       }
       case 'pan':
@@ -298,7 +327,7 @@ export class PointerController {
   hover(e) {
     if (e.pointerType === 'touch') return;
     const tool = this.tool;
-    if (tool === 'entry') { const hit = this.hitAt(e); this.view.setHover(null); if (!hit || hit.kind === 'text' || hit.kind === 'spanner') { this.view.setGhost(null); return; } this.showEntryGhost(hit, 0, false); return; }
+    if (tool === 'entry') { const hit = this.hitAt(e); this.view.setHover(null); if (!hit || hit.kind === 'text' || hit.kind === 'spanner' || this.app.settings.entryGhost === false) { this.view.setGhost(null); return; } this.showEntryGhost(hit, 0, false); return; }
     const hit = this.hitAt(e, { preferSpanners: tool === 'shape' || tool === 'select' });
     if (tool === 'select') { this.view.setHover(hit?.eventId && !hit.implicit ? hit.eventId : null); this.container.style.cursor = hit?.kind === 'spanner' ? 'pointer' : ''; return; }
     if (tool === 'measure') { this.view.setHover(null); return; }
@@ -324,6 +353,8 @@ export class PointerController {
 
   // ------------------------------------------------------------------ up
   onUp(e, cancelled = false) {
+    if (e.pointerId === this.penId) this.penId = null;
+    else if (this.penId != null && e.pointerType === 'touch') { this.pointers.delete(e.pointerId); return; }
     this.pointers.delete(e.pointerId);
     if (this.pinch && this.pointers.size < 2) { this.pinch = null; this.drag = null; return; }
     const d = this.drag; this.drag = null;
@@ -341,6 +372,8 @@ export class PointerController {
           else if (d.menuPending) this.ui.showContextMenu(d.menuPending.x, d.menuPending.y, d.menuPending.hit);
           return;
         }
+        if (d.penOnly) { if (!d.moved && !cancelled) this.penOnlyHint(); return; }
+        if (d.tapEntry) { if (d.hit && !d.moved && !cancelled) this.commitEntry(d.hit); return; }
         if (d.tapSelect && d.hit) this.app.select({ type: 'measure', mi: d.hit.mi, si: d.hit.si });
         else if (d.clear && !d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) this.app.clearSelection();
         return;
@@ -393,8 +426,13 @@ export class PointerController {
       }
     }
   }
+  /** A finger tapped the score while 펜 전용 입력 is on: say why nothing happened (and offer the way out). */
+  penOnlyHint() {
+    const now = Date.now(); if (now - (this._penHintAt || 0) < 8000) return; this._penHintAt = now;
+    this.ui.toast?.('펜 전용 입력이 켜져 있어 손가락으로는 화면 이동·확대만 됩니다', 'info', { timeout: 5000, action: { label: '끄기', onClick: () => this.app.setSetting?.('penOnly', false) } });
+  }
   onDouble(e) {
-    const tool = this.tool; if (tool !== 'select') return;
+    const tool = this.tool; if (tool !== 'select' || this.fingerLocked) return;
     const hit = this.hitAt(e);
     if (!hit) return;
     if (hit.kind === 'staff' || hit.kind === 'measure' || hit.implicit) {

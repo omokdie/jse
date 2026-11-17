@@ -8,6 +8,7 @@
  * Files touched (see RELEASING.md):
  *   electron/package.json                                   build.publish[0].owner / repo, homepage
  *   mobile/android/app/src/main/res/values/strings.xml      update_base_url
+ *   app/js/config.js                                        PAGES_BASE_URL (where the on-demand fonts are fetched from)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -55,6 +56,22 @@ let changed = 0;
     /<string name="update_base_url"([^>]*)>[^<]*<\/string>/,
     `<string name="update_base_url"$1>https://${owner}.github.io/${repo}/</string>`,
   );
+  if (after !== before) {
+    fs.writeFileSync(file, after);
+    console.log(`updated ${path.relative(root, file)}`);
+    changed++;
+  }
+}
+
+// app/js/config.js — the web app's own constant for the Pages site (on-demand "JSE 글꼴", app/js/fonts.js)
+{
+  const file = path.join(root, 'app', 'js', 'config.js');
+  const before = fs.readFileSync(file, 'utf8');
+  const after = before.replace(/(export const PAGES_BASE_URL = ')[^']*(';)/, `$1https://${owner}.github.io/${repo}/$2`);
+  if (!/export const PAGES_BASE_URL = '/.test(before)) {
+    console.error('app/js/config.js: PAGES_BASE_URL not found');
+    process.exit(1);
+  }
   if (after !== before) {
     fs.writeFileSync(file, after);
     console.log(`updated ${path.relative(root, file)}`);

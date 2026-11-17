@@ -7,15 +7,20 @@
  *  - the web app (../app) is served from app://scoresnap/ (see protocol.js)
  *  - IPC: save-file, open-dialog, update-*, open-external, get-app-version
  *  - native menu forwards actions to the renderer ('scoresnap:menu')
+ *  - desktop options of the settings window (설정 › Windows 앱): window size/position, start maximised,
+ *    hardware acceleration, default folder, close confirmation, zoom, keep-awake (IPC app-settings-*, …)
  */
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, powerSaveBlocker } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const log = require('electron-log/main');
 
 const proto = require('./protocol');
 const updater = require('./updater');
 const settings = require('./settings');
+const winstate = require('./winstate');
+const pkg = require('./package.json');
 const { buildMenu } = require('./menu');
 
 const APP_ID = 'kr.scoresnap.app';
@@ -39,6 +44,13 @@ let rendererReady = false;
 const pendingFiles = []; // payloads waiting for the renderer
 /** name → absolute path of the file it was opened from / last saved to (enables "Save" without a dialog). */
 const knownPaths = new Map();
+/** Close confirmation: the renderer asks to be consulted before the window closes (unsaved changes). */
+let closeGuard = false;      // renderer subscribed (preload onCloseRequest)
+let allowClose = false;      // the renderer (or app.quit) said: really close now
+let closeAckTimer = null;    // running while we wait for the renderer to acknowledge a close request
+let boundsTimer = null;
+let keepAwakeId = null;      // powerSaveBlocker id while "화면 켜짐 유지" is on
+const CLOSE_ACK_MS = 2500;
 
 /* ------------------------------------------------------------------ MIME / filters */
 const MIME_BY_EXT = {
@@ -58,6 +70,10 @@ const MIME_BY_EXT = {
   '.mxl': 'application/vnd.recordare.musicxml',
   '.musx': 'application/vnd.makemusic.notation',
   '.ftmx': 'application/vnd.makemusic.notation',
+  '.mscz': 'application/x-musescore',
+  '.mscx': 'application/x-musescore+xml',
+  '.nwc': 'application/x-nwc',
+  '.nwctxt': 'text/x-nwctxt',
   '.mid': 'audio/midi',
   '.midi': 'audio/midi',
   '.json': 'application/json',
@@ -74,6 +90,10 @@ const FILTER_BY_MIME = {
   'application/vnd.recordare.musicxml+xml': { name: 'MusicXML', extensions: ['musicxml', 'xml'] },
   'application/vnd.recordare.musicxml': { name: 'MusicXML (압축)', extensions: ['mxl'] },
   'application/vnd.makemusic.notation': { name: 'Finale 악보', extensions: ['musx', 'ftmx'] },
+  'application/x-musescore': { name: 'MuseScore 악보', extensions: ['mscz'] },
+  'application/x-musescore+xml': { name: 'MuseScore 악보 (압축 안 함)', extensions: ['mscx'] },
+  'application/x-nwc': { name: 'NoteWorthy Composer 악보', extensions: ['nwc'] },
+  'text/x-nwctxt': { name: 'NoteWorthy Composer 텍스트', extensions: ['nwctxt'] },
   'audio/midi': { name: 'MIDI', extensions: ['mid', 'midi'] },
   'audio/mid': { name: 'MIDI', extensions: ['mid', 'midi'] },
   'application/json': { name: 'JSON', extensions: ['json'] },
@@ -129,13 +149,13 @@ function openFilters(accept) {
 
 /* ------------------------------------------------------------------ file open */
 
-/** Pick .ssnap paths out of a command line (dev: argv[1] is "." / the app dir). */
+/** Pick score files (.ssnap and the formats JSE imports) out of a command line (dev: argv[1] is "." / the app dir). */
 function extractFileArgs(argv, cwd) {
   const out = [];
   const args = Array.isArray(argv) ? argv.slice(1) : [];
   for (const arg of args) {
     if (typeof arg !== 'string' || arg.startsWith('--') || arg.startsWith('-')) continue;
-    if (!/\.(ssnap|musx|ftmx|musicxml|mxl)$/i.test(arg)) continue;
+    if (!/\.(ssnap|musx|ftmx|musicxml|mxl|mscz|mscx|nwc|nwctxt)$/i.test(arg)) continue;
     const abs = path.isAbsolute(arg) ? arg : path.resolve(cwd || process.cwd(), arg);
     try {
       if (fs.statSync(abs).isFile()) out.push(abs);
@@ -197,14 +217,91 @@ function focusMainWindow() {
   mainWindow.focus();
 }
 
+/* ------------------------------------------------------------------ desktop options (설정 › Windows 앱) */
+
+function appSettings() {
+  return winstate.readAppSettings(settings.get('app', {}));
+}
+
+/** Folder the open / save dialogs start in: the fixed one from the settings, else the last one used. */
+function dialogDir() {
+  const fixed = appSettings().defaultDir;
+  if (fixed) {
+    try {
+      if (fs.statSync(fixed).isDirectory()) return fixed;
+    } catch {
+      /* the folder is gone → fall back */
+    }
+  }
+  return settings.get('lastDir', app.getPath('documents'));
+}
+
+/** Size / position for a new window (stored bounds when "창 크기·위치 기억" is on and they are still on a display). */
+function initialBounds() {
+  const fallback = { width: winstate.DEFAULT_WIDTH, height: winstate.DEFAULT_HEIGHT };
+  try {
+    if (!appSettings().rememberBounds) return fallback;
+    const stored = settings.getIn('window', 'bounds', null);
+    const { screen } = require('electron'); // usable only after 'ready' — createWindow() runs after it
+    const areas = screen.getAllDisplays().map((d) => d.workArea);
+    return winstate.restoreBounds(stored, areas);
+  } catch (err) {
+    log.warn('window bounds: using defaults', err && err.message);
+    return fallback;
+  }
+}
+
+function saveWindowState(win) {
+  try {
+    if (!win || win.isDestroyed() || !appSettings().rememberBounds) return;
+    if (win.isMinimized() || win.isFullScreen()) return; // keep what we had
+    const state = winstate.boundsToStore(win.getNormalBounds(), win.isMaximized());
+    if (state) settings.set('window', state);
+  } catch (err) {
+    log.warn('window bounds: not saved', err && err.message);
+  }
+}
+
+function scheduleSaveWindowState(win) {
+  clearTimeout(boundsTimer);
+  boundsTimer = setTimeout(() => saveWindowState(win), 600);
+  if (boundsTimer && typeof boundsTimer.unref === 'function') boundsTimer.unref();
+}
+
+/** The window is about to close with a renderer that wants a say: ask it, but never trap the user. */
+function requestRendererClose(win) {
+  if (closeAckTimer) return; // already asked, the answer is on its way
+  // (timer first: the acknowledgement must always find something to cancel)
+  closeAckTimer = setTimeout(() => {
+    closeAckTimer = null;
+    log.warn('close request was not acknowledged by the renderer — closing');
+    allowClose = true;
+    if (!win.isDestroyed()) win.close();
+  }, CLOSE_ACK_MS);
+  sendToRenderer('scoresnap:close-request');
+}
+
+function setKeepAwake(on) {
+  try {
+    if (on) {
+      if (keepAwakeId === null || !powerSaveBlocker.isStarted(keepAwakeId)) keepAwakeId = powerSaveBlocker.start('prevent-display-sleep');
+    } else if (keepAwakeId !== null) {
+      if (powerSaveBlocker.isStarted(keepAwakeId)) powerSaveBlocker.stop(keepAwakeId);
+      keepAwakeId = null;
+    }
+  } catch (err) {
+    log.warn('keep-awake failed', err && err.message);
+  }
+  return keepAwakeId !== null;
+}
+
 /* ------------------------------------------------------------------ window */
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1360,
-    height: 860,
-    minWidth: 900,
-    minHeight: 600,
+    ...initialBounds(),
+    minWidth: winstate.MIN_WIDTH,
+    minHeight: winstate.MIN_HEIGHT,
     show: false,
     backgroundColor: '#dfe6fa',
     // The web UI draws its own liquid-glass title bar with minimise / maximise / close buttons
@@ -223,12 +320,34 @@ function createWindow() {
     },
   });
   mainWindow = win;
+  allowClose = false;
+  closeGuard = false;
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    try {
+      const opts = appSettings();
+      if (opts.startMaximized || (opts.rememberBounds && settings.getIn('window', 'maximized', false) === true)) win.maximize();
+    } catch (err) {
+      log.warn('start maximised failed', err && err.message);
+    }
+    win.show();
+  });
 
   // The renderer re-announces itself (preload → 'scoresnap:ready') after every load.
   win.webContents.on('did-start-loading', () => {
     rendererReady = false;
+    closeGuard = false; // a fresh page subscribes again
+  });
+
+  // Remember size / position (debounced while dragging, and once more when the window closes).
+  ['resize', 'move', 'maximize', 'unmaximize'].forEach((ev) => win.on(ev, () => scheduleSaveWindowState(win)));
+
+  // Alt+F4 / taskbar close: give the web app the chance to ask about unsaved changes.
+  win.on('close', (event) => {
+    saveWindowState(win);
+    if (allowClose || !closeGuard || !rendererReady) return;
+    event.preventDefault();
+    requestRendererClose(win);
   });
 
   // Links: open http(s) in the system browser, never inside the app.
@@ -250,6 +369,10 @@ function createWindow() {
   win.on('closed', () => {
     mainWindow = null;
     rendererReady = false;
+    closeGuard = false;
+    clearTimeout(closeAckTimer);
+    closeAckTimer = null;
+    clearTimeout(boundsTimer);
   });
 
   win.loadURL(proto.INDEX_URL);
@@ -292,8 +415,7 @@ function registerIpc() {
     }
 
     if (o.suggestDialog || !target) {
-      const lastDir = settings.get('lastDir', app.getPath('documents'));
-      const defaultPath = target || path.join(lastDir, name);
+      const defaultPath = target || path.join(dialogDir(), name);
       const res = await dialog.showSaveDialog(win, {
         title: '저장',
         defaultPath,
@@ -318,7 +440,7 @@ function registerIpc() {
     const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
     const res = await dialog.showOpenDialog(win, {
       title: '열기',
-      defaultPath: settings.get('lastDir', app.getPath('documents')),
+      defaultPath: dialogDir(),
       filters: openFilters(o.accept),
       properties: ['openFile'],
     });
@@ -348,7 +470,7 @@ function registerIpc() {
       case 'minimize': win.minimize(); break;
       case 'toggle-maximize': if (win.isMaximized()) win.unmaximize(); else win.maximize(); break;
       case 'toggle-fullscreen': win.setFullScreen(!win.isFullScreen()); break;
-      case 'close': win.close(); break;
+      case 'close': allowClose = true; win.close(); break; // the renderer already asked about unsaved changes
       default: break;
     }
     return { maximized: win.isMaximized(), fullscreen: win.isFullScreen(), focused: win.isFocused() };
@@ -363,6 +485,68 @@ function registerIpc() {
 
   ipcMain.handle('scoresnap:show-in-folder', (event, filePath) => {
     if (typeof filePath === 'string' && filePath) shell.showItemInFolder(filePath);
+  });
+
+  // ---- settings window: desktop options (설정 › Windows 앱) ----
+  ipcMain.handle('scoresnap:app-settings-get', () => ({ ...appSettings(), lastDir: settings.get('lastDir', ''), settingsFile: settings.filePath() }));
+  ipcMain.handle('scoresnap:app-settings-set', (event, partial) => {
+    const next = { ...appSettings(), ...winstate.cleanAppSettings(partial) };
+    settings.set('app', next);
+    if (!next.rememberBounds) settings.set('window', undefined);
+    return next;
+  });
+  ipcMain.handle('scoresnap:choose-folder', async (event, opts) => {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    const res = await dialog.showOpenDialog(win, {
+      title: '기본 폴더 선택',
+      defaultPath: typeof o.defaultPath === 'string' && o.defaultPath ? o.defaultPath : dialogDir(),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (res.canceled || !res.filePaths || !res.filePaths.length) return null;
+    return res.filePaths[0];
+  });
+  ipcMain.handle('scoresnap:open-system-settings', async (event, what) => {
+    // Windows 10/11: Settings → Apps → Default apps (where .ssnap can be bound to JSE)
+    if (process.platform !== 'win32' || String(what) !== 'default-apps') return false;
+    await shell.openExternal('ms-settings:defaultapps');
+    return true;
+  });
+  ipcMain.handle('scoresnap:show-settings-file', () => {
+    shell.showItemInFolder(settings.filePath());
+    return true;
+  });
+  ipcMain.handle('scoresnap:relaunch', () => {
+    allowClose = true; // the renderer asked about unsaved changes before calling this
+    app.relaunch();
+    app.quit();
+    return true;
+  });
+  ipcMain.handle('scoresnap:set-zoom', (event, factor) => {
+    const f = winstate.cleanZoomFactor(factor);
+    event.sender.setZoomFactor(f);
+    return f;
+  });
+  ipcMain.handle('scoresnap:keep-awake', (event, on) => setKeepAwake(!!on));
+  ipcMain.handle('scoresnap:app-info', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node,
+    os: `${os.type()} ${os.release()} (${process.arch})`,
+    homepage: pkg.homepage || '',
+    gpuDisabled: gpuDisabledAtStart,
+  }));
+
+  // ---- close confirmation ----
+  ipcMain.handle('scoresnap:close-guard', (event, on) => {
+    closeGuard = !!on;
+    return closeGuard;
+  });
+  ipcMain.handle('scoresnap:close-ack', () => {
+    clearTimeout(closeAckTimer);
+    closeAckTimer = null;
+    return true;
   });
 }
 
@@ -403,6 +587,11 @@ function bootstrap() {
     contents.on('will-attach-webview', (e) => e.preventDefault());
   });
 
+  // Quitting (menu Quit, the updater's quit-and-install, app.relaunch) must never be held up by the close question.
+  app.on('before-quit', () => {
+    allowClose = true;
+  });
+
   app.whenReady().then(() => {
     proto.registerAppProtocol(log);
     registerIpc();
@@ -432,6 +621,17 @@ function bootstrap() {
 }
 
 /* ------------------------------------------------------------------ single instance + start */
+// 설정 › Windows 앱 › 하드웨어 가속 끄기 — only possible before the app is ready, so it applies on the next start.
+let gpuDisabledAtStart = false;
+try {
+  if (appSettings().disableGpu) {
+    app.disableHardwareAcceleration();
+    gpuDisabledAtStart = true;
+  }
+} catch (err) {
+  log.warn('hardware acceleration setting ignored', err && err.message);
+}
+
 app.setAppUserModelId(APP_ID); // must equal build.appId so taskbar/shortcut grouping works
 
 if (!app.requestSingleInstanceLock()) {
@@ -441,4 +641,4 @@ if (!app.requestSingleInstanceLock()) {
   bootstrap();
 }
 
-module.exports = { extractFileArgs, openFilters, saveFilters, safeBaseName, mimeForFile };
+module.exports = { extractFileArgs, openFilters, saveFilters, safeBaseName, mimeForFile, dialogDir, initialBounds };

@@ -86,3 +86,67 @@ test('imports a hand-written MuseScore-style file', () => {
   assert.equal(s.measures[0].chords[0].text, 'F');
   assert.equal(s.measures[0].barlineRight, 'final');
 });
+
+// ---- cross-staff tuplets, tuplets left open, more than four voices on a staff
+const durTicksOf = ev => { const B = { whole: 3840, half: 1920, quarter: 960, eighth: 480, '16th': 240, '32nd': 120, '64th': 60, '128th': 30 }; let t = B[ev.dur.base] * [1, 1.5, 1.75][ev.dur.dots || 0]; if (ev.tuplet) t = t * ev.tuplet.den / ev.tuplet.num; return ev.grace ? 0 : t; };
+const lengthOf = v => v.reduce((s, e) => s + durTicksOf(e), 0);
+const pianoHead = (beats, beatType, body) => `<?xml version="1.0" encoding="UTF-8"?><score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+<part id="P1"><measure number="1"><attributes><divisions>12</divisions><key><fifths>0</fifths></key><time><beats>${beats}</beats><beat-type>${beatType}</beat-type></time><staves>2</staves><clef number="1"><sign>G</sign><line>2</line></clef><clef number="2"><sign>F</sign><line>4</line></clef></attributes>${body}</measure></part></score-partwise>`;
+const xnote = (step, oct, dur, type, voice, staff, extra = '') => `<note><pitch><step>${step}</step><octave>${oct}</octave></pitch><duration>${dur}</duration><voice>${voice}</voice><type>${type}</type>${extra.includes('<time-modification') ? extra.match(/<time-modification>.*?<\/time-modification>/)[0] : ''}<staff>${staff}</staff>${extra.replace(/<time-modification>.*?<\/time-modification>/, '')}</note>`;
+const TM6 = '<time-modification><actual-notes>6</actual-notes><normal-notes>4</normal-notes></time-modification>';
+
+test('a sextuplet that wanders between the staves keeps every voice exact', () => {
+  // voice 1: six sextuplet 16ths — E4 B3 on the upper staff, G3 E3 on the lower, E4 B3 on the upper — then a quarter
+  const body = [
+    xnote('E', 4, 2, '16th', 1, 1, TM6 + '<notations><tuplet type="start" bracket="no"/></notations>'),
+    xnote('B', 3, 2, '16th', 1, 1, TM6),
+    xnote('G', 3, 2, '16th', 1, 2, TM6),
+    xnote('E', 3, 2, '16th', 1, 2, TM6),
+    xnote('E', 4, 2, '16th', 1, 1, TM6),
+    xnote('B', 3, 2, '16th', 1, 1, TM6 + '<notations><tuplet type="stop"/></notations>'),
+    xnote('C', 5, 12, 'quarter', 1, 1),
+    '<backup><duration>24</duration></backup>',
+    xnote('C', 3, 24, 'half', 5, 2),
+  ].join('');
+  const s = importMusicXML(pianoHead(2, 4, body));
+  const [up, low] = s.measures[0].staves;
+  const u = up.voices[0];
+  assert.deepEqual(u.map(e => (e.kind === 'note' ? e.notes[0].step + e.notes[0].octave : 'r') + (e.hidden ? 'h' : '') + (e.tuplet ? 't' : '')), ['E4t', 'B3t', 'rht', 'E4t', 'B3t', 'C5']);
+  assert.equal(lengthOf(u), 1920, 'upper voice fills the 2/4 measure exactly');
+  assert.equal(new Set(u.filter(e => e.tuplet).map(e => e.tuplet.id)).size, 1, 'one tuplet group on the upper staff');
+  assert.equal(u[5].tuplet, undefined, 'the quarter after the tuplet is plain');
+  // the two notes on the lower staff: hidden tuplet rests before and after them complete the tuplet there
+  const borrowed = low.voices.find(v => v.some(e => e.kind === 'note' && e.notes[0].step === 'G'));
+  assert.deepEqual(borrowed.map(e => (e.kind === 'note' ? e.notes[0].step : 'r') + (e.hidden ? 'h' : '') + (e.tuplet ? 't' : '')), ['rht', 'Gt', 'Et', 'rht']);
+  assert.equal(lengthOf(borrowed), 960, 'its share of the tuplet is one quarter long');
+  const bass = low.voices.find(v => v.some(e => e.kind === 'note' && e.notes[0].step === 'C'));
+  assert.equal(lengthOf(bass), 1920);
+});
+
+test('a plain note never inherits a tuplet that was left open', () => {
+  // the <tuplet type="stop"> sits on a note of the other staff, then plain eighths follow on the first staff
+  const TM3 = '<time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes></time-modification>';
+  const body = [
+    xnote('C', 5, 4, 'eighth', 1, 1, TM3 + '<notations><tuplet type="start"/></notations>'),
+    xnote('E', 5, 4, 'eighth', 1, 1, TM3),
+    xnote('G', 3, 4, 'eighth', 1, 2, TM3 + '<notations><tuplet type="stop"/></notations>'),
+    xnote('D', 5, 6, 'eighth', 1, 1), xnote('F', 5, 6, 'eighth', 1, 1),
+  ].join('');
+  const s = importMusicXML(pianoHead(2, 4, body));
+  const u = s.measures[0].staves[0].voices[0];
+  assert.deepEqual(u.map(e => (e.kind === 'note' ? e.notes[0].step : 'r') + (e.hidden ? 'h' : '') + (e.tuplet ? 't' : '')), ['Ct', 'Et', 'rht', 'D', 'F']);
+  assert.equal(lengthOf(u), 1920);
+  assert.equal(u[2].dur.base, 'eighth', 'the place of the third triplet note is a hidden triplet eighth');
+});
+
+test('a fifth voice on a staff borrows a free voice instead of piling onto the fourth', () => {
+  const one = (voice, step) => xnote(step, 4, 48, 'whole', voice, 1);
+  const back = '<backup><duration>48</duration></backup>';
+  const m1 = [one(1, 'C'), back, one(2, 'D'), back, one(3, 'E'), back, one(4, 'F')].join('');
+  const m2 = [one(5, 'G'), back, one(6, 'A')].join('');           // two more XML voices, alone in their measure
+  const xml = pianoHead(4, 4, m1).replace('</measure></part>', `</measure><measure number="2">${m2}</measure></part>`);
+  const s = importMusicXML(xml);
+  const v2 = s.measures[1].staves[0].voices.filter(v => v.length);
+  assert.equal(v2.length, 2, 'the two voices stay apart');
+  for (const v of v2) assert.equal(lengthOf(v), 3840, 'neither is over-full');
+});

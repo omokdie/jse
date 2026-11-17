@@ -1,0 +1,123 @@
+/* 글꼴 (text styles): the dialog docked beside the score, the font picker and the inspector controls.
+   Loaded after app.css; uses its variables. Phone = bottom sheet, tablet / desktop = side panel, so the
+   score stays visible and shows every change live. */
+
+/* ---------- dialog shell ---------- */
+.dialog-backdrop.ts-back { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; align-items: flex-start; justify-content: flex-end; padding: 12px; touch-action: none; animation: none; }
+.dialog.ts-dialog { width: min(480px, 100%); max-height: calc(100vh - 24px); box-shadow: 0 22px 60px rgba(20, 30, 60, .32); animation: ts-in .18s ease-out; }
+@keyframes ts-in { from { transform: translateX(18px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ts-dialog header { padding: 14px 16px 6px 18px; }
+.ts-dialog .content { padding: 0 12px 8px; overscroll-behavior: contain; touch-action: pan-y; }
+.ts-dialog footer { padding: 10px 16px 14px; flex-wrap: wrap; }
+.ts-dialog footer .btn { min-height: 34px; }
+.ts-intro { margin: 0 6px 8px !important; font-size: 12px; line-height: 1.5 !important; }
+
+/* while the panel is open on a wide screen the score area ends where the panel begins (class set by ui/textstyle.js) */
+.body.ts-docked { padding-right: 504px; }
+
+/* ---------- one row per kind of text ---------- */
+.ts-list { display: flex; flex-direction: column; }
+.ts-row { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 8px; padding: 5px 6px; border-top: 1px solid transparent; }
+.ts-row + .ts-row { border-top-color: var(--glass-stroke-2); }
+.ts-row.focus { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 12px; border-top-color: transparent; }
+.ts-row.focus + .ts-row { border-top-color: transparent; }
+.ts-name { min-width: 0; line-height: 1.25; }
+.ts-name b { display: block; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-name small { display: block; color: var(--faint); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- the controls (shared by the dialog rows and the inspector) ---------- */
+.ts-ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ts-font { position: relative; flex: 1 1 0; min-width: 0; height: 32px; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 10px; border: 1px solid var(--field-stroke); border-radius: var(--r-s); background: var(--field); color: var(--text); text-align: left; overflow: hidden; }
+.ts-font:hover { background: var(--control-hover); }
+.ts-font-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; }
+.ts-font-note { flex: none; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.ts-font-note.warn { color: #b25e00; }
+:root.theme-dark .ts-font-note.warn, :root.theme-auto.dark .ts-font-note.warn { color: var(--warn); }
+.ts-font svg, .ts-preset svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+.ts-bar { position: absolute; left: 0; bottom: 0; height: 2.5px; width: 0; background: var(--accent); border-radius: 2px; transition: width .15s; }
+.ts-size { flex: none; display: inline-flex; align-items: stretch; height: 32px; border: 1px solid var(--control-stroke); border-radius: var(--r-s); background: var(--control); overflow: hidden; }
+.ts-size > button { width: 27px; border: 0; background: none; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.ts-size > button:hover, .ts-preset:hover { background: var(--control-hover); color: var(--text); }
+.ts-size > button svg { width: 14px; height: 14px; }
+.ts-pt { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px; background: var(--field); border-left: 1px solid var(--control-stroke); border-right: 1px solid var(--control-stroke); color: var(--muted); font-size: 11px; cursor: text; }
+.ts-pt input { width: 36px; border: 0; background: none; padding: 0; text-align: right; font-size: 13px; color: var(--text); outline: none; font-variant-numeric: tabular-nums; }
+/* DOM order is − ▾ value + (the <select> comes first so a dialog's initial focus never lands in the text field and opens a phone keyboard); shown as − value + ▾ */
+.ts-size > .ts-pt { order: 1; } .ts-size > [data-ts=inc] { order: 2; } .ts-size > .ts-preset { order: 3; }
+.ts-preset { position: relative; width: 22px; display: inline-flex; align-items: center; justify-content: center; border-left: 1px solid var(--control-stroke); }
+.ts-preset select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; font-size: 16px; }
+.ts-emph { flex: none; display: inline-flex; border: 1px solid var(--control-stroke); border-radius: var(--r-s); overflow: hidden; background: var(--control); height: 32px; }
+.ts-emph button { width: 30px; border: 0; background: none; color: var(--muted); font-size: 14px; padding: 0; }
+.ts-emph button + button { border-left: 1px solid var(--control-stroke); }
+.ts-emph button:hover { background: var(--control-hover); }
+.ts-emph button.on { background: var(--accent-soft); color: var(--accent); }
+.ts-emph button i { font-style: italic; display: inline-block; transform: skewX(-8deg); }
+.ts-size > button:focus-visible, .ts-emph button:focus-visible, .ts-font:focus-visible { outline-offset: -2px; }
+
+.ts-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 4px 2px; }
+.ts-actions .ts-spacer { flex: 1; }
+.ts-note { margin: 8px 6px 0 !important; font-size: 11.5px; color: var(--faint) !important; line-height: 1.5 !important; }
+
+/* ---------- font picker ---------- */
+.ts-picker-catch { position: fixed; inset: 0; z-index: 94; }
+.ts-picker { position: fixed; z-index: 95; width: 340px; max-height: 460px; display: flex; flex-direction: column; background: var(--glass-2); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border: 1px solid var(--glass-stroke); border-radius: var(--r-l); box-shadow: 0 18px 50px rgba(20, 30, 60, .34); overflow: hidden; animation: pop-in .14s ease-out; }
+.ts-picker-head { display: flex; gap: 6px; padding: 8px 8px 6px; align-items: center; }
+.ts-picker-head input { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--field-stroke); border-radius: 999px; padding: 0 12px; background: var(--field); font-size: 14px; }
+.ts-picker-head button { flex: none; width: 34px; height: 34px; border: 0; border-radius: 50%; background: var(--control); color: var(--muted); font-size: 17px; }
+.ts-picker-list { overflow: auto; padding: 0 6px 8px; overscroll-behavior: contain; scrollbar-width: thin; }
+.ts-group { position: sticky; top: 0; z-index: 1; padding: 8px 8px 4px; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--glass-2); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.ts-group small { font-weight: 500; color: var(--faint); margin-left: 6px; }
+.ts-opt { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; width: 100%; min-height: 38px; padding: 4px 10px; border: 0; background: none; border-radius: 10px; color: var(--text); text-align: left; }
+.ts-opt:hover, .ts-opt.kb { background: var(--control-hover); }
+.ts-opt.on { background: var(--accent-soft); }
+.ts-opt-name { grid-column: 1; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+.ts-opt-sub { grid-column: 1; font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ts-opt-sub:empty { display: none; }
+.ts-opt-state { grid-column: 2; grid-row: 1 / span 2; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ts-opt-state svg { width: 15px; height: 15px; }
+.ts-opt-state.ok { color: #1c8a42; }
+:root.theme-dark .ts-opt-state.ok, :root.theme-auto.dark .ts-opt-state.ok { color: var(--ok); }
+.ts-opt-state.get { color: var(--accent); }
+.ts-opt.ts-more { color: var(--accent); font-weight: 600; }
+.ts-opt.ts-more .ts-opt-name { font-size: 13px; }
+.ts-empty { padding: 14px 10px; color: var(--muted); font-size: 12.5px; }
+
+/* ---------- inspector ---------- */
+.ts-insp .ts-ctl { flex-wrap: wrap; row-gap: 6px; }
+.ts-insp .ts-font { flex: 1 1 100%; }
+.ts-insp h4 .chip { font-weight: 500; }
+.ts-insp .ts-own { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--glass-stroke-2); }
+.ts-insp .ts-own.off .ts-ctl { opacity: .72; }
+
+/* ---------- touch: 44 px targets, two lines per row ---------- */
+html.touch .ts-row, html.phone .ts-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name emph" "font size"; row-gap: 6px; padding: 8px 6px; }
+html.touch .ts-row .ts-ctl, html.phone .ts-row .ts-ctl { display: contents; }
+html.touch .ts-row .ts-name, html.phone .ts-row .ts-name { grid-area: name; display: flex; align-items: baseline; gap: 8px; }
+html.touch .ts-row .ts-name b, html.phone .ts-row .ts-name b { font-size: 14px; }
+html.touch .ts-row .ts-emph, html.phone .ts-row .ts-emph { grid-area: emph; justify-self: end; }
+html.touch .ts-row .ts-font, html.phone .ts-row .ts-font { grid-area: font; }
+html.touch .ts-row .ts-size, html.phone .ts-row .ts-size { grid-area: size; }
+html.touch .ts-font, html.touch .ts-size, html.touch .ts-emph, html.phone .ts-font, html.phone .ts-size, html.phone .ts-emph { height: 46px; }   /* 44 px inside the border */
+html.touch .ts-size > button, html.touch .ts-emph button, html.phone .ts-size > button, html.phone .ts-emph button { width: 44px; }
+html.touch .ts-preset, html.phone .ts-preset { width: 44px; }
+html.touch .ts-size > button svg, html.phone .ts-size > button svg { width: 18px; height: 18px; }
+html.touch .ts-pt input, html.phone .ts-pt input { width: 42px; font-size: 16px; }   /* 16 px: no zoom-in on focus */
+html.touch .ts-font-name, html.phone .ts-font-name { font-size: 15px; }
+html.touch .ts-emph button, html.phone .ts-emph button { font-size: 17px; }
+html.touch .ts-dialog footer .btn, html.touch .ts-actions .btn, html.phone .ts-dialog footer .btn, html.phone .ts-actions .btn { min-height: 44px; padding: 0 16px; }
+html.touch .ts-dialog header button, html.phone .ts-dialog header button { width: 44px; height: 44px; }
+html.touch .ts-opt, html.phone .ts-opt { min-height: 48px; }
+html.touch .ts-picker-head input, html.touch .ts-picker-head button, html.phone .ts-picker-head input, html.phone .ts-picker-head button { height: 44px; }
+html.touch .ts-picker-head button, html.phone .ts-picker-head button { width: 44px; }
+html.touch .ts-picker-head input, html.phone .ts-picker-head input { font-size: 16px; }
+html.touch .ts-insp .ts-font, html.touch .ts-insp .ts-size, html.touch .ts-insp .ts-emph { height: 46px; }
+html.touch .ts-insp .btn, html.phone .ts-insp .btn { min-height: 44px; padding: 0 14px; }
+
+/* tablet in portrait and phones: a sheet at the bottom, the score above it */
+html.tablet.portrait .dialog-backdrop.ts-back, html.phone .dialog-backdrop.ts-back { align-items: flex-end; justify-content: center; padding: 8px 8px calc(8px + var(--sab)); }
+html.tablet.portrait .dialog.ts-dialog { width: min(720px, 100%); max-height: 48vh; animation-name: sheet-in; }
+html.phone .dialog.ts-dialog { width: 100%; max-height: 62vh; animation-name: sheet-in; }
+html.phone .ts-dialog header { padding: 8px 10px 2px 16px; }
+html.phone .ts-intro { display: none; }
+html.phone .ts-picker { left: 8px !important; right: 8px; top: auto !important; bottom: calc(8px + var(--sab)); width: auto !important; max-height: 72vh !important; border-radius: var(--r-xl); animation-name: sheet-in; }
+html.phone .ts-picker-catch { background: rgba(20, 24, 40, .28); }
+@media (max-height: 520px) { .dialog.ts-dialog { max-height: calc(100vh - 16px) !important; } }

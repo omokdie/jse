@@ -9,6 +9,7 @@ export class Player extends EventTarget {
     this.app = app; this.ctx = null; this.master = null;
     this.playing = false; this.startAt = 0; this.offset = 0; this.pb = null; this.nextIdx = 0;
     this.tempoScale = 1; this.metronome = false; this.volume = 0.8; this.loop = null; this.timer = null; this.raf = null;
+    this.countIn = 0;            // bars of clicks before the music starts (설정 › 재생 › 카운트인)
     this.scheduled = [];
   }
   ensureCtx() {
@@ -25,15 +26,30 @@ export class Player extends EventTarget {
   setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }
   prepare() { this.pb = buildPlayback(this.app.score); }
   get duration() { return this.pb ? this.pb.duration / this.tempoScale : 0; }
-  get position() { return this.playing ? this.offset + (this.ctx.currentTime - this.startAt) * this.tempoScale : this.offset; }
-  play(fromMeasure = null) {
+  // (during a count-in the clock has not reached startAt yet: the position waits at the start)
+  get position() { return this.playing ? this.offset + Math.max(0, this.ctx.currentTime - this.startAt) * this.tempoScale : this.offset; }
+  /** Schedule `countIn` bars of clicks at the tempo of the first measure played; returns how long they take (s). */
+  scheduleCountIn() {
+    const bars = Math.max(0, Math.min(4, Math.round(Number(this.countIn) || 0)));
+    const mts = this.pb?.measureTimes || [];
+    if (!bars || !mts.length) return 0;
+    let mt = mts.find(m => this.offset >= m.time - 1e-6 && this.offset < m.time + m.dur - 1e-6) || mts[0];
+    if (this.app.score.measures[mt.mi]?.pickup) mt = mts.find(m => m.mi === mt.mi + 1) || mt;   // an upbeat measure is shorter than a bar
+    const ts = this.measureTimeSig(mt.mi);
+    const beat = (mt.beat ?? mt.dur / ts.num) / this.tempoScale;
+    if (!(beat > 0.04 && beat < 5)) return 0;
+    const t0 = this.ctx.currentTime + 0.08, n = bars * ts.num;
+    for (let i = 0; i < n; i++) this.click(t0 + i * beat, i % ts.num === 0);
+    return 0.03 + n * beat;
+  }
+  play(fromMeasure = null, { countIn = true } = {}) {
     this.ensureCtx();
     this.prepare();
     if (fromMeasure != null) { const mt = this.pb.measureTimes.find(m => m.mi === fromMeasure); this.offset = mt ? mt.time : 0; }
     if (this.offset >= this.pb.duration - 0.01) this.offset = 0;
-    this.playing = true; this.startAt = this.ctx.currentTime + 0.05;
+    this.playing = true; this.startAt = this.ctx.currentTime + 0.05 + (countIn ? this.scheduleCountIn() : 0);
     this.nextIdx = this.pb.notes.findIndex(n => n.time >= this.offset - 0.001); if (this.nextIdx < 0) this.nextIdx = this.pb.notes.length;
-    this.nextClick = Math.ceil(this.offset / this.beatSec(this.offset) - 1e-6);
+    this.nextClick = this.pb.clicks.findIndex(c => c.time >= this.offset - 1e-6); if (this.nextClick < 0) this.nextClick = this.pb.clicks.length;
     this.scheduleLoop();
     this.tick();
     this.dispatchEvent(new Event('state'));
@@ -46,7 +62,7 @@ export class Player extends EventTarget {
   beatSec(time) {
     const mt = this.pb.measureTimes.find(m => time >= m.time && time < m.time + m.dur) || this.pb.measureTimes[0];
     if (!mt) return 0.5;
-    const ts = this.measureTimeSig(mt.mi); return mt.dur / ts.num;
+    const ts = this.measureTimeSig(mt.mi); return mt.beat ?? mt.dur / ts.num;
   }
   measureTimeSig(mi) { let m = mi; while (m > 0 && !this.app.score.measures[m].timeSig) m--; return this.app.score.measures[m].timeSig || { num: 4, den: 4 }; }
   scheduleLoop() {
@@ -59,17 +75,12 @@ export class Player extends EventTarget {
       const when = this.startAt + (n.time - this.offset) / this.tempoScale;
       this.playNote(n, when, n.dur / this.tempoScale);
     }
-    if (this.metronome) {
-      for (;;) {
-        const bs = this.beatSec(this.nextClick * 0.5 * 0 + Math.max(0, this.nextClick) * this.beatSec(now));
-        const t = this.nextClick * bs; if (t > until) break;
-        const mt = this.pb.measureTimes.find(m => t >= m.time - 1e-6 && t < m.time + m.dur - 1e-6);
-        const accent = mt && Math.abs(t - mt.time) < 1e-3;
-        this.click(this.startAt + (t - this.offset) / this.tempoScale, accent);
-        this.nextClick++;
-      }
+    const clicks = this.pb.clicks;
+    while (this.nextClick < clicks.length && clicks[this.nextClick].time <= until) {
+      const c = clicks[this.nextClick++];
+      if (this.metronome) this.click(this.startAt + (c.time - this.offset) / this.tempoScale, c.accent);
     }
-    if (now >= this.pb.duration) { this.timer = setTimeout(() => { if (this.loop) { this.offset = 0; this.play(); } else this.stop(); }, 600); return; }
+    if (now >= this.pb.duration) { this.timer = setTimeout(() => { if (this.loop) { this.offset = 0; this.play(null, { countIn: false }); } else this.stop(); }, 600); return; }
     this.timer = setTimeout(() => this.scheduleLoop(), 100);
   }
   tick() {
@@ -141,6 +152,8 @@ export class Player extends EventTarget {
   }
   /** Audition a single pitch (used while entering/moving notes). */
   preview(midi, program = 0, channel = 0) {
+    if (this.app.settings?.inputSound === false) return;   // 설정 › 편집·입력 › 입력할 때 소리 내기
+    this.lastPreviewAt = performance.now();
     try { this.ensureCtx(); this.playNote({ midi, velocity: 80, program, channel, eventIds: [] }, this.ctx.currentTime + 0.01, 0.35); } catch { /* ignore */ }
   }
 }

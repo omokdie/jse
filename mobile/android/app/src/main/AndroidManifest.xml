@@ -17,6 +17,8 @@
     <!-- Lets the app hand a downloaded APK to the package installer (self-update when minNative rises).
          Remove if you only ever distribute through an app store. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Haptic ticks while entering notes (설정 › 편집·입력 › 진동 피드백): ScoreSnapNativePlugin.vibrate / navigator.vibrate -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <uses-feature
         android:name="android.hardware.camera"
@@ -101,6 +103,29 @@
                 <data android:pathPattern=".*\\..*\\..*\\.musx" />
                 <data android:pathPattern=".*\\.MUSX" />
                 <data android:pathPattern=".*\\.ftmx" />
+            </intent-filter>
+
+            <!-- 3c) MuseScore (.mscz / .mscx) and NoteWorthy Composer (.nwc / .nwctxt) files — imported and
+                     converted to a JSE score. (A file manager that hides the file name behind a content://
+                     id does not match these; "share → JSE" and the app's own 열기 always work.) -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.mscz" />
+                <data android:pathPattern=".*\\..*\\.mscz" />
+                <data android:pathPattern=".*\\..*\\..*\\.mscz" />
+                <data android:pathPattern=".*\\.mscx" />
+                <data android:pathPattern=".*\\..*\\.mscx" />
+                <data android:pathPattern=".*\\.nwc" />
+                <data android:pathPattern=".*\\..*\\.nwc" />
+                <data android:pathPattern=".*\\..*\\..*\\.nwc" />
+                <data android:pathPattern=".*\\.NWC" />
+                <data android:pathPattern=".*\\.nwctxt" />
+                <data android:pathPattern=".*\\..*\\.nwctxt" />
             </intent-filter>
 
             <!-- 4) Share sheet: any single file (scores, photos of scores for OMR, MusicXML …) -->

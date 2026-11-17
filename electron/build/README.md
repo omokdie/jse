@@ -21,3 +21,10 @@ node scripts/make-icons.mjs    # ../app/icons/icon-512.png → icon.ico, ssnap.i
 * 현재 저장소에 들어 있는 `icon.ico` / `ssnap.ico` 는 그 플레이스홀더입니다.
 * CI(`.github/workflows/build-windows.yml`)는 빌드할 때마다 이 스크립트를 다시 실행합니다.
 * `.ico` 컨테이너는 스크립트 안에서 직접 기록합니다(별도 png-to-ico 의존성 없음).
+
+## installer.nsh
+
+설치 프로그램에 덧붙는 NSIS 스크립트(`package.json → build.nsis.include`)입니다. MuseScore(`.mscz` `.mscx`)·
+NWC(`.nwc` `.nwctxt`) 파일의 **연결 프로그램 목록에 JSE 를 올리기만** 하고, 기본 프로그램은 바꾸지 않습니다
+(MuseScore·NWC 가 설치된 PC 의 연결을 빼앗지 않기 위해서입니다). `.ssnap` `.musx` `.ftmx` 는
+`build.fileAssociations` 가 JSE 의 파일 형식으로 등록합니다.

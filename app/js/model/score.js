@@ -265,6 +265,26 @@ export function findEvent(score, id) {
   forEachEvent(score, (ev, ctx) => { if (!found && ev.id === id) found = { ev, ...ctx }; });
   return found;
 }
+/** Semitones a note sounds above (+) or below (−) where it is written because of an 8va / 8vb / 15ma line:
+ *  Map eventId → shift. A ScoreDoc stores notes as they are written on the staff; a line covers every voice of its
+ *  staff from its first to its last event. */
+export function ottavaShifts(score) {
+  const out = new Map();
+  const lines = (score.spanners || []).filter(sp => sp.type === 'ottava' && sp.from && sp.to);
+  if (!lines.length) return out;
+  const pos = new Map();
+  score.measures.forEach((m, mi) => m.staves.forEach((sm, si) => sm.voices.forEach(v => { let t = 0; for (const ev of v) { pos.set(ev.id, { mi, si, tick: t }); t += durTicks(ev); } })));
+  for (const sp of lines) {
+    const a = pos.get(sp.from.eventId), b = pos.get(sp.to.eventId);
+    if (!a || !b || a.si !== b.si || b.mi < a.mi) continue;
+    const size = Math.abs(sp.octaveShift || 8) === 15 ? 24 : 12, shift = (sp.octaveShift || 8) > 0 ? size : -size;
+    for (let mi = a.mi; mi <= b.mi; mi++) for (const v of score.measures[mi].staves[a.si].voices) {
+      let t = 0;
+      for (const ev of v) { if ((mi > a.mi || t >= a.tick - 1) && (mi < b.mi || t <= b.tick + 1)) out.set(ev.id, (out.get(ev.id) || 0) + shift); t += durTicks(ev); }
+    }
+  }
+  return out;
+}
 export function findMeasure(score, id) { const mi = score.measures.findIndex(m => m.id === id); return mi < 0 ? null : { measure: score.measures[mi], mi }; }
 
 // ---------- validation / repair ----------

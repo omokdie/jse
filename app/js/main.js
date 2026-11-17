@@ -30,24 +30,29 @@ async function boot() {
   window.JSE.ui = ui;
 
   // initial document: autosaved draft → else the example score
-  let restored = false;
+  // (설정 › 일반 › 시작 화면: resume = as before · welcome = always show the welcome choices · new = start with an empty score)
+  const startup = app.settings.startup || 'resume';
+  let restored = false, draft = null;
   try {
-    const draft = app.settings.autosave ? await storage.loadDraft() : null;
-    if (draft?.score?.measures?.length) {
+    draft = app.settings.autosave ? await storage.loadDraft() : null;
+    if (startup !== 'new' && draft?.score?.measures?.length) {
       app.setScore(draft.score, { fileName: draft.meta?.fileName || null });
       restored = true;
     }
   } catch (e) { console.warn('draft restore failed', e); }
-  if (!restored) app.setScore(exampleScore(), { fileName: null });
+  if (!restored) { if (startup === 'new') app.newScore({ title: '제목 없음', instruments: ['voice'], measures: 16, tempo: 100 }); else app.setScore(exampleScore(), { fileName: null }); }
 
-  // view defaults: phones get the continuous (reflow) view, desktops the page view
-  const mode = isMobileLayout() ? 'reflow' : (app.settings.viewMode && app.settings.viewMode !== 'reflow' ? app.settings.viewMode : 'vertical');
+  // view defaults: phones get the continuous (reflow) view, desktops the page view (설정 › 화면 › 기본 보기 방식 · 기본 확대)
+  const dv = app.settings.defaultView || 'last';
+  const mode = isMobileLayout() ? 'reflow' : dv !== 'last' ? dv : (app.settings.viewMode && app.settings.viewMode !== 'reflow' ? app.settings.viewMode : 'vertical');
   ui.view.setViewMode(mode);
-  if (mode !== 'reflow') ui.view.fit('width');
+  if (mode !== 'reflow') ui.fitDefault();
+  app.prefs.afterBoot();   // 시작 도구
   ui.updateMode(); ui.updateHint(); ui.renderInputbar(); ui.updateTitle(); ui.renderPanels(); ui.updateStatus();
   document.getElementById('app').setAttribute('aria-busy', 'false');
 
   if (restored) ui.toast('이전에 작업하던 악보를 불러왔습니다', 'info', { action: { label: '새로 시작', onClick: () => ui.action('new') } });
+  else if (startup === 'new' && draft?.score?.measures?.length) ui.toast('이전에 작업하던 악보가 있습니다', 'info', { timeout: 9000, action: { label: '불러오기', onClick: () => { app.setScore(draft.score, { fileName: draft.meta?.fileName || null }); ui.fitDefault(); } } });
 
   // files handed to the PWA by the OS (file_handlers) or via ?action= shortcuts
   if ('launchQueue' in window) {
@@ -59,7 +64,8 @@ async function boot() {
   }
   const action = new URLSearchParams(location.search).get('action');
   if (action === 'scan') ui.scan(); else if (action === 'new') ui.action('new');
-  else if (!restored) ui.welcome();
+  else if (startup === 'welcome') ui.welcome(true);
+  else if (!restored && startup !== 'new') ui.welcome();
 
   const chip = document.querySelector('[data-act=update]');
   ui.updater.addEventListener('status', e => {

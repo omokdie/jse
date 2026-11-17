@@ -31,7 +31,7 @@ export class Frag {
   path(d, cls = '', attrs = '') { this.parts.push(`<path d="${d}"${cls ? ` class="${cls}"` : ''}${attrs}/>`); }
   text(x, y, str, { size = 2, anchor = 'start', bold = false, italic = false, cls = '', family = '' } = {}) {
     if (!str) return;
-    this.parts.push(`<text x="${f3(x)}" y="${f3(y)}" font-size="${f3(size)}"${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''}${bold ? ' font-weight="700"' : ''}${italic ? ' font-style="italic"' : ''}${family ? ` font-family='${family}'` : ''}${cls ? ` class="${cls}"` : ''}>${escapeXml(str)}</text>`);
+    this.parts.push(`<text x="${f3(x)}" y="${f3(y)}" font-size="${f3(size)}"${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''}${bold ? ' font-weight="700"' : ''}${italic ? ' font-style="italic"' : ''}${family ? ` style="font-family:${family}"` : ''}${cls ? ` class="${cls}"` : ''}>${escapeXml(str)}</text>`);
     this.ext(y - size * 0.95, y + size * 0.3);
   }
   toString() { return this.parts.join(''); }

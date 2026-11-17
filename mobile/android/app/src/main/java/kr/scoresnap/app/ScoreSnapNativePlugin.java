@@ -5,6 +5,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
@@ -14,14 +15,21 @@ import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
 import android.util.Log;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
 
 import androidx.annotation.RequiresApi;
 import androidx.core.content.FileProvider;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 
 import com.getcapacitor.Bridge;
 import com.getcapacitor.JSObject;
@@ -44,7 +52,8 @@ import java.util.Locale;
  * Native half of window.ScoreSnapNative on Android (JS side: mobile/www-shim/native-android.js).
  *
  * Methods : getInfo, readPendingFile, saveFile, shareFile, openUrl,
- *           checkForUpdates, getUpdateStatus, installUpdate, getUpdateSettings, setUpdateSettings
+ *           checkForUpdates, getUpdateStatus, installUpdate, getUpdateSettings, setUpdateSettings,
+ *           setKeepScreenOn, setImmersive, setOrientation, vibrate   (설정 › Android 앱; NATIVE_API 2)
  * Events  : "openFile"     {name, mime, size}   — a file arrived via VIEW/SEND intent; JS then calls readPendingFile
  *           "updateStatus" UpdateStatus         — SPEC §6
  */
@@ -61,8 +70,16 @@ public class ScoreSnapNativePlugin extends Plugin {
     private static final String SSNAP_MIME = "application/x-scoresnap";
     private static final long MAX_OPEN_BYTES = 50L * 1024 * 1024;
     private static final String DOWNLOAD_SUBDIR = "JSE";
+    /**
+     * Version of this plugin's method set, reported as getInfo().api.  The web bundle is updated over the
+     * air and may be newer than the installed app, so the JS shim only offers what the shell reports.
+     *   2 = setKeepScreenOn, setImmersive, setOrientation, vibrate
+     */
+    static final int NATIVE_API = 2;
 
     private WebUpdater updater;
+    /** 전체 화면(몰입 모드) is on — re-applied when the app comes back to the front. */
+    private boolean immersive;
 
     private final Object pendingLock = new Object();
     private Uri pendingUri;
@@ -93,6 +110,15 @@ public class ScoreSnapNativePlugin extends Plugin {
     protected void handleOnResume() {
         super.handleOnResume();
         if (updater != null) updater.checkIfDue();
+        if (immersive) {
+            getActivity().runOnUiThread(() -> {
+                try {
+                    applyImmersive();
+                } catch (Exception e) {
+                    Log.d(TAG, "immersive mode not re-applied", e);
+                }
+            });
+        }
     }
 
     @Override
@@ -126,6 +152,7 @@ public class ScoreSnapNativePlugin extends Plugin {
         o.put("packagedWebVersion", WebUpdater.packagedVersion(ctx));
         o.put("updateBaseUrl", ctx.getString(R.string.update_base_url));
         o.put("sdkInt", Build.VERSION.SDK_INT);
+        o.put("api", NATIVE_API);
         return o;
     }
 
@@ -522,6 +549,90 @@ public class ScoreSnapNativePlugin extends Plugin {
         } catch (Exception e) {
             call.reject("브라우저를 열 수 없습니다", e);
         }
+    }
+
+    /* ------------------------------------------------------------------ screen / device (설정 › Android 앱) */
+
+    /** {on:boolean} — keep the display awake while the app is in front. */
+    @PluginMethod
+    public void setKeepScreenOn(final PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getActivity().runOnUiThread(() -> {
+            try {
+                Window window = getActivity().getWindow();
+                if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("화면 켜짐 유지를 바꿀 수 없습니다", e);
+            }
+        });
+    }
+
+    /** {on:boolean} — hide the status and navigation bars; a swipe from the edge shows them briefly. */
+    @PluginMethod
+    public void setImmersive(final PluginCall call) {
+        immersive = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getActivity().runOnUiThread(() -> {
+            try {
+                applyImmersive();
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("전체 화면을 바꿀 수 없습니다", e);
+            }
+        });
+    }
+
+    /** UI thread only. */
+    private void applyImmersive() {
+        Window window = getActivity().getWindow();
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
+        if (controller == null) return;
+        if (immersive) {
+            controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars());
+        }
+    }
+
+    /** {orientation:"auto"|"portrait"|"landscape"} — "auto" follows the device's rotation setting. */
+    @PluginMethod
+    public void setOrientation(final PluginCall call) {
+        String o = call.getString("orientation", "auto");
+        final int requested;
+        if ("portrait".equals(o)) requested = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT;
+        else if ("landscape".equals(o)) requested = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+        else requested = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().setRequestedOrientation(requested);
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("화면 방향을 바꿀 수 없습니다", e);
+            }
+        });
+    }
+
+    /** {duration:number} milliseconds (1–200) — a short haptic tick; silently does nothing without a vibrator. */
+    @SuppressWarnings("deprecation")
+    @PluginMethod
+    public void vibrate(PluginCall call) {
+        Integer requested = call.getInt("duration", 10);
+        long ms = Math.max(1, Math.min(200, requested == null ? 10 : requested));
+        try {
+            Vibrator vibrator = (Vibrator) getContext().getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+                } else {
+                    vibrator.vibrate(ms);
+                }
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "vibrate failed", e);
+        }
+        call.resolve();
     }
 
     /* ------------------------------------------------------------------ updates */

@@ -14,7 +14,7 @@ import { icon, noteIcon, accidentalIcon, tieIcon, drumIcon, tupletIcon, barlineI
 import { TOOLS, SHAPES, ARTICS, EXPRS, toolById } from '../editor/tools.js';
 import { groupHTML, bindGroups, closeFlyout } from './flyout.js';
 import { groupFactory } from './groups.js';
-import { writeSsnap, readSsnap, sniffFile } from '../io/ssnap.js';
+import { writeSsnap, readSsnap, sniffFile, FOREIGN_SCORE_FORMATS } from '../io/ssnap.js';
 import { storage } from '../io/storage.js';
 import { rasterizePage, canvasToBlob, safeFileName, printLayout } from '../io/export.js';
 import { Player } from '../playback/synth.js';
@@ -23,8 +23,10 @@ import { saveBlob, pickFiles, onNativeOpenFile, isMobileLayout, native, shareBlo
 import { PianoKeyboard } from './pianokb.js';
 import { exportDialog } from './exportdlg.js';
 import { scanDialog } from './omrflow.js';
+import { openSettings } from './settings.js';
 import { exampleScore } from '../model/examples.js';
 import { escapeXml } from '../engrave/text.js';
+import { textStylesDialog, initScoreFonts } from './textstyle.js';   // 글꼴 (text styles)
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -45,6 +47,8 @@ export class UI {
     this.bindAppEvents();
     this.bindPlayer();
     this.bindGlobal();
+    initScoreFonts(app, this);   // 글꼴: load the downloadable fonts a score uses, re-layout when they arrive
+    app.prefs?.attach(this);  // settings registry: push stored values to the player, panels, native shell …
   }
 
   // ---------------------------------------------------------------- shell
@@ -267,15 +271,22 @@ export class UI {
     const b = this.el.topbar.querySelector('.win-controls [data-w=max]');
     if (b) { b.innerHTML = icon(st.maximized || st.fullscreen ? 'winRestore' : 'winMax'); b.title = st.maximized || st.fullscreen ? '이전 크기로' : '최대화'; }
   }
-  async requestClose() {
+  /** Unsaved work before the window goes away. 설정 › Windows 앱 › 닫을 때 저장 확인: auto (ask only without autosave) | always | never. */
+  async confirmLeave() {
     const app = this.app;
-    if (app.dirty && !app.settings.autosave) {
-      const v = await D.showDialog({ title: '닫기 전에 저장할까요?', body: '<p>저장하지 않은 변경사항이 있습니다.</p>', buttons: [{ label: '저장 안 함', value: 'discard', danger: true }, { label: t('cancel'), value: null }, { label: t('save'), value: 'save', primary: true }] });
-      if (!v) return;
-      if (v === 'save' && !(await this.save())) return;
-    } else if (app.dirty) await storage.saveDraft(app.score, { fileName: app.fileName });
-    native()?.windowControls?.close();
+    const mode = app.settings.winCloseConfirm || 'auto';
+    if (app.dirty && (mode === 'always' || (mode === 'auto' && !app.settings.autosave))) {
+      if (this._leaveAsking) return false;   // the question is already on screen (close pressed twice)
+      this._leaveAsking = true;
+      let v; try { v = await D.showDialog({ title: '닫기 전에 저장할까요?', body: '<p>저장하지 않은 변경사항이 있습니다.</p>', buttons: [{ label: '저장 안 함', value: 'discard', danger: true }, { label: t('cancel'), value: null }, { label: t('save'), value: 'save', primary: true }] }); } finally { this._leaveAsking = false; }
+      if (!v) return false;
+      if (v === 'save' && !(await this.save())) return false;
+    }
+    if (app.dirty && app.settings.autosave) await storage.saveDraft(app.score, { fileName: app.fileName });
+    return true;
   }
+  async requestClose() { if (await this.confirmLeave()) native()?.windowControls?.close(); }
+  async requestRelaunch() { const n = native(); if (typeof n?.relaunch === 'function' && await this.confirmLeave()) n.relaunch(); }
   async toggleFullscreen() {
     const wc = native()?.windowControls;
     if (wc?.toggleFullScreen) { const st = await wc.toggleFullScreen(); if (st) this.updateWinState(st); return; }
@@ -350,7 +361,7 @@ export class UI {
     });
   }
   fileSheet() {
-    const items = [['new', 'new', t('new')], ['scan', 'scan', '사진으로 인식'], ['audio', 'audio', '음원으로 악보'], ['open', 'open', t('open')], ['save', 'save', t('save')], ['saveAs', 'save', t('saveAs')], ['export', 'export', t('export')], ['share', 'share', '공유'], ['meta', 'pencil', '제목/작곡가'], ['instruments', 'sliders', '악기(파트)'], ['pageSetup', 'pageSingle', '페이지 설정'], ['transpose', 'refresh', '조옮김'], ['shortcuts', 'keyboard', '단축키'], ['settings', 'settings', '설정'], ['about', 'info', '정보']];
+    const items = [['new', 'new', t('new')], ['scan', 'scan', '사진으로 인식'], ['audio', 'audio', '음원으로 악보'], ['open', 'open', t('open')], ['save', 'save', t('save')], ['saveAs', 'save', t('saveAs')], ['export', 'export', t('export')], ['share', 'share', '공유'], ['meta', 'pencil', '제목/작곡가'], ['instruments', 'sliders', '악기(파트)'], ['pageSetup', 'pageSingle', '페이지 설정'], ['textStyles', 'font', '글꼴'], ['transpose', 'refresh', '조옮김'], ['shortcuts', 'keyboard', '단축키'], ['settings', 'settings', '설정'], ['about', 'info', '정보']];
     showSheet('파일 · 악보', `<div class="cards" style="padding:4px 14px 18px">${items.map(([a, ic, lb]) => `<button class="card" data-a="${a}">${icon(ic)}<b>${lb}</b></button>`).join('')}</div>`, (sh, close) => sh.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', () => { close(); this.action(b.dataset.a); })));
   }
 
@@ -384,7 +395,7 @@ export class UI {
       if (d.mi != null) {
         const r = this.view.measureRect(d.mi);
         if (r) this.view.setPlayCursor({ page: r.page, svg: `<rect class="play-cursor" x="${(r.x + r.measure.width * d.frac - 0.5).toFixed(2)}" y="${r.y.toFixed(2)}" width="1" height="${r.h.toFixed(2)}" rx="0.5"/>` });
-        if (d.mi !== lastMi) { lastMi = d.mi; this.view.scrollToMeasure(d.mi); }
+        if (d.mi !== lastMi) { lastMi = d.mi; if (this.app.settings.followPlayback !== false) this.view.scrollToMeasure(d.mi); }
       }
     });
   }
@@ -486,7 +497,7 @@ export class UI {
   setView(mode) { this.view.setViewMode(mode); this.updateStatus(); this.app.settings.viewMode = mode; this.app.saveSettings(); }
   updateHint() {
     const h = this.el.hint; const app = this.app;
-    if (this.hintHidden || !app.settings.tips) { h.hidden = true; return; }
+    if (this.hintHidden || app.settings.hints === false) { h.hidden = true; return; }
     let msg = '';
     const tool = app.tool || 'select';
     if (app.mode === 'input') msg = isMobileLayout() ? '오선을 누르고 위아래로 밀어 음높이 선택 → 손을 떼면 다음 자리에 입력 · 기존 음표 위·아래 = 화음' : '심플 입력: 오선 클릭 = 다음 자리에 입력 · 기존 음표 위·아래 클릭 = 화음 · <span class="kbd">5</span> 4분 <span class="kbd">4</span> 8분 <span class="kbd">6</span> 2분 · <span class="kbd">0</span> 쉼표 · <span class="kbd">Esc</span> 끝';
@@ -589,6 +600,7 @@ export class UI {
         { label: '제목/작곡가…', icon: 'pencil', onClick: () => this.metaDialog() },
         { label: '악기(파트)…', icon: 'sliders', onClick: () => this.instrumentsDialog() },
         { label: '페이지 설정…', icon: 'pageSingle', onClick: () => this.pageSetupDialog() },
+        { label: '글꼴…', icon: 'font', onClick: () => this.textStyles() },
         { sep: true },
         { label: '마디 끝에 추가', icon: 'plus', key: 'Ctrl+B', onClick: () => app.exec('마디 추가', s => C.appendMeasures(s, 1)) },
         { label: '선택 앞에 마디 삽입', icon: 'plus', key: 'Ctrl+Ins', onClick: () => { const ip = app.insertPoint(); app.exec('마디 삽입', s => C.insertMeasures(s, ip.mi, 1)); } },
@@ -607,7 +619,13 @@ export class UI {
         { label: 'PNG 이미지', icon: 'image', onClick: () => this.exportDialog('png') },
         { label: 'JPG 이미지', icon: 'image', onClick: () => this.exportDialog('jpg') },
         { label: 'SVG 벡터', icon: 'image', onClick: () => this.exportDialog('svg') },
-        { label: 'MusicXML (다른 악보 프로그램용)', icon: 'file', onClick: () => this.exportDialog('musicxml') },
+        { sep: true },
+        { label: 'MuseScore 파일 (.mscz)', icon: 'file', onClick: () => this.exportDialog('musescore') },
+        { label: 'NWC 파일 (.nwc)', icon: 'file', onClick: () => this.exportDialog('nwc') },
+        { label: 'Sibelius용 (MusicXML)', icon: 'file', onClick: () => this.exportDialog('sibelius') },
+        { label: 'Finale용 (MusicXML)', icon: 'file', onClick: () => this.exportDialog('finale') },
+        { label: 'MusicXML (그 밖의 프로그램)', icon: 'file', onClick: () => this.exportDialog('musicxml') },
+        { sep: true },
         { label: 'MIDI', icon: 'piano', onClick: () => this.exportDialog('midi') },
         { label: 'JSE 파일 (.ssnap)', icon: 'save', onClick: () => this.exportDialog('ssnap') },
       ],
@@ -615,7 +633,7 @@ export class UI {
         { label: '시작 안내', icon: 'spark', onClick: () => this.welcome(true) },
         { label: t('shortcuts'), icon: 'keyboard', key: 'F1', onClick: () => D.shortcutsDialog() },
         { label: t('checkUpdate'), icon: 'update', onClick: () => this.updater.check(true) },
-        { label: t('settings') + '…', icon: 'settings', onClick: () => D.settingsDialog(app, this) },
+        { label: t('settings') + '…', icon: 'settings', key: 'Ctrl+,', onClick: () => this.settings() },
         { label: t('about'), icon: 'info', onClick: () => D.aboutDialog(this.version) },
       ],
     };
@@ -649,7 +667,7 @@ export class UI {
       );
     } else if (hit?.kind === 'text') {
       app.select({ type: 'text', ref: hit.ref });
-      items.push({ label: '편집', icon: 'pencil', key: 'Enter', onClick: () => this.editText(hit.ref) }, { label: t('delete'), icon: 'trash', onClick: () => app.deleteSelection() });
+      items.push({ label: '편집', icon: 'pencil', key: 'Enter', onClick: () => this.editText(hit.ref) }, { label: '글꼴 바꾸기…', icon: 'font', onClick: () => this.textStyles(hit.ref) }, { label: t('delete'), icon: 'trash', onClick: () => app.deleteSelection() });
     } else if (hit?.mi != null || app.selection.type === 'measure' || app.selection.type === 'range') {
       if (hit?.mi != null && !(app.selection.type === 'measure' || app.selection.type === 'range')) app.select({ type: 'measure', mi: hit.mi, si: hit.si });
       const mi = hit?.mi ?? app.rangeOf(app.selection).fromMi;
@@ -689,12 +707,12 @@ export class UI {
       case 'modeInput': app.setMode('input'); break;
       case 'play': this.togglePlay(); break;
       case 'stop': this.player.stop(); break;
-      case 'metronome': this.player.metronome = !this.player.metronome; this.scheduleOptions(); this.toast(this.player.metronome ? '메트로놈 켬' : '메트로놈 끔'); break;
+      case 'metronome': this.player.metronome = !this.player.metronome; app.setSetting?.('metronome', this.player.metronome); this.scheduleOptions(); this.toast(this.player.metronome ? '메트로놈 켬' : '메트로놈 끔'); break;
       case 'scan': this.scan(); break;
       case 'audio': this.audio(); break;
       case 'export': this.exportDialog(); break;
       case 'update': if (this.updater.status.state === 'ready') this.updater.install(); else this.updater.check(true); break;
-      case 'settings': D.settingsDialog(app, this); break;
+      case 'settings': this.settings(args.section); break;
       case 'toggleLeft': this.el.body.classList.toggle('hide-left'); this.renderPanels(); this.updateRail(); setTimeout(() => this.view.fitMode && this.view.applyFit(), 50); break;
       case 'toggleRight': this.el.body.classList.toggle('hide-right'); this.renderPanels(); this.updateRail(); setTimeout(() => this.view.fitMode && this.view.applyFit(), 50); break;
       case 'zoomIn': this.view.zoomBy(1.15); break;
@@ -707,7 +725,7 @@ export class UI {
       case 'new': if (await this.confirmDiscard()) D.newScoreDialog(app, this); break;
       case 'open': this.openFile(); break;
       case 'recent': this.recentDialog(); break;
-      case 'example': if (await this.confirmDiscard()) { app.setScore(exampleScore(), { fileName: null }); this.view.fit('width'); } break;
+      case 'example': if (await this.confirmDiscard()) { app.setScore(exampleScore(), { fileName: null }); this.fitDefault(); } break;
       case 'save': this.save(); break;
       case 'saveAs': this.saveAs(); break;
       case 'print': if (!printLayout(app.layout)) this.toast('팝업이 차단되어 인쇄 창을 열 수 없습니다. PDF로 내보내 인쇄하세요.', 'warn'); break;
@@ -716,6 +734,7 @@ export class UI {
       case 'meta': this.metaDialog(); break;
       case 'instruments': this.instrumentsDialog(); break;
       case 'pageSetup': this.pageSetupDialog(); break;
+      case 'textStyles': this.textStyles(args.focus); break;
       case 'transpose': this.transposeDialog(); break;
       case 'shortcuts': D.shortcutsDialog(); break;
       case 'about': D.aboutDialog(this.version); break;
@@ -727,7 +746,8 @@ export class UI {
         { label: t('save'), icon: 'save', onClick: () => this.save() },
         { label: '피아노 건반', icon: 'piano', onClick: () => this.piano.toggle() },
         { label: (this.player.metronome ? '✓ ' : '') + '메트로놈', icon: 'metronome', onClick: () => this.action('metronome') },
-        { label: t('settings'), icon: 'settings', onClick: () => D.settingsDialog(app, this) },
+        { label: '글꼴', icon: 'font', onClick: () => this.textStyles() },
+        { label: t('settings'), icon: 'settings', onClick: () => this.settings() },
       ], { anchorEl: el }); break;
       default: console.warn('unknown action', act);
     }
@@ -1089,11 +1109,21 @@ export class UI {
   }
   metaDialog() { return D.metaDialog(this.app); }
   pageSetupDialog() { return D.pageSetupDialog(this.app); }
+  /** 글꼴 dialog. focus: a style key ('title', 'lyrics', 'chord', …) or a text hit reference → that row is highlighted. */
+  textStyles(focus = null) { return textStylesDialog(this.app, this, focus); }
   instrumentsDialog() { return D.instrumentsDialog(this.app, this); }
   transposeDialog() { return D.transposeDialog(this.app); }
   showShortcuts() { return D.shortcutsDialog(); }
   newScoreDialog() { return this.action('new'); }
   exportDialog(fmt) { return exportDialog(this.app, this, fmt); }
+  /** Settings window (ui/settings.js); `section` = registry section id, e.g. 'display'. */
+  settings(section) { return openSettings(this.app, this, section); }
+  /** Zoom chosen in 설정 › 화면 › 기본 확대 (폭 맞춤 unless changed). */
+  fitDefault() {
+    if (this.app.viewMode === 'reflow') return;
+    const z = this.app.settings.defaultZoom || 'width';
+    if (z === 'width' || z === 'page') this.view.fit(z); else this.view.setZoom((Number(z) || 100) / 100);
+  }
   scan(opts = {}) { return scanDialog(this.app, this, opts); }
   audio(opts = {}) {
     // the claude.ai preview page does not carry the Basic Pitch model (third-party weights)
@@ -1107,13 +1137,13 @@ export class UI {
     return D.confirmDialog('저장하지 않은 변경', '현재 악보에 저장하지 않은 변경사항이 있습니다. 계속하면 현재 악보는 닫힙니다(자동 저장본은 덮어씁니다). 계속할까요?', '계속');
   }
   async openFile() {
-    const files = await pickFiles({ accept: '.ssnap,.musx,.ftmx,.musicxml,.xml,.mxl,.json,image/*,.pdf,application/pdf,audio/*,.mp3,.m4a,.wav,.ogg,.flac', multiple: true });
+    const files = await pickFiles({ accept: '.ssnap,.musx,.ftmx,.mscz,.mscx,.nwc,.nwctxt,.musicxml,.xml,.mxl,.mid,.midi,.sib,.mus,.json,image/*,.pdf,application/pdf,audio/*,.mp3,.m4a,.wav,.ogg,.flac', multiple: true });
     if (files.length) this.openFiles(files);
   }
   async openFiles(files) {
     // images & PDFs go to the scanner together; the first score file opens
     const kinds = await Promise.all(files.map(async f => ({ ...f, kind: sniffFile(f.name, await f.blob.slice(0, 4096).arrayBuffer()) })));
-    const audios = files.filter(f => /\.(mp3|m4a|mp4|aac|wav|wave|ogg|oga|opus|flac|webm|weba|aif|aiff|caf|amr|3gp)$/i.test(f.name || '') || /^audio\//.test(f.blob?.type || ''));
+    const audios = kinds.filter(f => f.kind !== 'midi' && (/\.(mp3|m4a|mp4|aac|wav|wave|ogg|oga|opus|flac|webm|weba|aif|aiff|caf|amr|3gp)$/i.test(f.name || '') || /^audio\//.test(f.blob?.type || '')));
     if (audios.length && !kinds.some(f => f.kind === 'image' || f.kind === 'pdf')) { this.audio({ files: audios }); return; }
     const scans = kinds.filter(f => f.kind === 'image' || f.kind === 'pdf');
     if (scans.length) { this.scan({ files: scans }); return; }
@@ -1133,9 +1163,9 @@ export class UI {
           if (w.length) setTimeout(() => this.toast(`Finale 파일을 가져왔습니다. 참고: ${w.slice(0, 2).join(' · ')}`, 'info', { timeout: 7000 }), 600);
         } finally { busy?.remove(); }
       }
-      else if (f.kind === 'finale-old') { this.toast('Finale 2012 이전 형식(.mus)은 열 수 없습니다. Finale에서 MusicXML로 내보낸 뒤 열어 주세요.', 'warn', { timeout: 7000 }); return; }
       else if (f.kind === 'json') { const score = JSON.parse(await f.blob.text()); this.app.setScore(score, { fileName: f.name.replace(/\.json$/i, '.ssnap') }); }
-      else if (f.kind === 'midi') { this.toast('MIDI 가져오기는 아직 지원하지 않습니다. MusicXML이나 사진을 사용하세요.', 'warn'); return; }
+      // files of other notation programs: MuseScore / NWC / MIDI are converted, closed formats (Sibelius …) get a how-to
+      else if (['musescore', 'nwc', 'midi'].includes(f.kind) || FOREIGN_SCORE_FORMATS[f.kind]) { const { openForeign } = await import('./importflow.js'); if (!(await openForeign(this, f))) return; }
       else { this.toast(`열 수 없는 파일 형식입니다: ${f.name}`, 'error'); return; }
       this.afterOpen(f.name);
     } catch (e) { console.error(e); this.toast(`파일을 열지 못했습니다: ${e.message}`, 'error', { timeout: 6000 }); }
@@ -1146,7 +1176,7 @@ export class UI {
     catch (e) { console.error(e); this.toast('MusicXML을 읽지 못했습니다: ' + e.message, 'error'); }
   }
   afterOpen(name) {
-    if (this.app.viewMode !== 'reflow') this.view.fit('width');
+    this.fitDefault();
     this.view.container.scrollTo({ top: 0 });
     storage.addRecent({ id: name, name, title: this.app.score.meta.title });
     this.toast(`${name} — ${t('opened')}`, 'ok');
@@ -1159,7 +1189,7 @@ export class UI {
     const app = this.app;
     const name = safeFileName(app.fileName?.replace(/\.[^.]+$/, '') || app.score.meta.title || 'score', '.ssnap');
     try {
-      const blob = await writeSsnap(app.score, { thumbnailBlob: await this.thumbnail(), appVersion: this.version });
+      const blob = await writeSsnap(this.scoreForFile(), { thumbnailBlob: await this.thumbnail(), appVersion: this.version });
       const res = await saveBlob(blob, name, { mime: 'application/x-scoresnap', suggestDialog: asNew || (!app.fileHandle && !app.savedOnce), handle: asNew ? null : app.fileHandle, types: [{ description: 'JSE 악보', accept: { 'application/x-scoresnap': ['.ssnap'] } }] });
       if (!res) return false;
       app.savedOnce = true;
@@ -1170,8 +1200,10 @@ export class UI {
       return true;
     } catch (e) { console.error(e); this.toast('저장 실패: ' + e.message, 'error'); return false; }
   }
+  /** The score as it goes into a .ssnap file: without the source photos when 설정 › 파일 › 원본 사진 포함 is off. */
+  scoreForFile() { const s = this.app.score; return this.app.settings.saveSourcePhotos === false && s.sources?.length ? { ...s, sources: [] } : s; }
   async share() {
-    const app = this.app; const blob = await writeSsnap(app.score, { appVersion: this.version });
+    const app = this.app; const blob = await writeSsnap(this.scoreForFile(), { appVersion: this.version });
     const ok = await shareBlob(blob, safeFileName(app.score.meta.title || 'score', '.ssnap'), app.score.meta.title).catch(() => false);
     if (!ok) { this.toast('이 기기에서는 공유를 지원하지 않아 파일로 저장합니다', 'info'); this.saveAs(); }
   }
@@ -1181,8 +1213,11 @@ export class UI {
   }
   scheduleAutosave() {
     if (!this.app.settings.autosave) return;
+    // 설정 › 파일 › 자동 저장 간격: "고칠 때마다" waits for a pause in the edits; longer intervals save at most once per interval
+    const delay = Math.max(0.6, Number(this.app.settings.autosaveDelay) || 1.2) * 1000;
+    if (delay > 2000 && this._asT) return;
     clearTimeout(this._asT);
-    this._asT = setTimeout(async () => { const ok = await storage.saveDraft(this.app.score, { fileName: this.app.fileName }); this._saveText = ok ? `자동 저장 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}` : ''; this.updateStatus(); this.updateTitle(); }, 1200);
+    this._asT = setTimeout(async () => { this._asT = null; const ok = await storage.saveDraft(this.app.score, { fileName: this.app.fileName }); this._saveText = ok ? `자동 저장 ${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}` : ''; this.updateStatus(); this.updateTitle(); }, 1200);
   }
 
   // ---------------------------------------------------------------- OMR review support (after recognition)
@@ -1257,7 +1292,7 @@ export class UI {
         <button class="card" data-v="scan">${icon('scan')}<b>사진으로 악보 만들기</b><span>카메라·이미지·PDF 인식</span></button>
         <button class="card" data-v="audio">${icon('audio')}<b>음원으로 악보 만들기</b><span>MP3·WAV를 듣고 받아 적기</span></button>
         <button class="card" data-v="new">${icon('new')}<b>새 악보 쓰기</b><span>멜로디·피아노·기타·드럼</span></button>
-        <button class="card" data-v="open">${icon('open')}<b>파일 열기</b><span>.ssnap · Finale(.musx) · MusicXML</span></button>
+        <button class="card" data-v="open">${icon('open')}<b>파일 열기</b><span>JSE · Finale · MuseScore · NWC · MusicXML</span></button>
         <button class="card" data-v="example">${icon('score')}<b>예제 둘러보기</b><span>가사·코드가 있는 악보</span></button>
       </div>`, buttons: [], onOpen: (root, close) => root.querySelectorAll('[data-v]').forEach(b => b.addEventListener('click', () => close(b.dataset.v))) });
     if (v) this.action(v);

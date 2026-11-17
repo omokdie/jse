@@ -4,6 +4,7 @@ import { GLYPHS } from './glyphs.js';
 import { SP, annotateScore, breakSystems, slotPositions, keySigPositions, keySigStep, headWidthFor } from './layout.js';
 import { Frag, f3, renderStaffMeasure } from './notes.js';
 import { textWidth, escapeXml, prettyChord, TEXT_FONT } from './text.js';
+import { engraveStyles } from './styles.js';
 
 const CLEF_GLYPH = { treble: 'gClef', treble8vb: 'gClef8vb', treble8va: 'gClef8va', bass: 'fClef', bass8vb: 'fClef8vb', alto: 'cClef', tenor: 'cClef', percussion: 'percClef' };
 const CLEF_Y = { treble: 3, treble8vb: 3, treble8va: 3, bass: 1, bass8vb: 1, alto: 2, tenor: 1, percussion: 2 };
@@ -33,12 +34,14 @@ export function engrave(score, options = {}) {
   const margin = { top: mg.top / spMm, bottom: mg.bottom / spMm, left: mg.left / spMm, right: mg.right / spMm };
   const contentW = pageW - margin.left - margin.right;
   const staves = staffList(score);
+  const TS = engraveStyles(score);   // font family / size / bold / italic of every kind of text (settings.textStyles)
   let firstIndent = s.firstSystemIndentSp || 0, indent = 0;
   if (score.parts.length > 1 && s.showPartNames !== false) {
-    firstIndent = Math.max(firstIndent, ...score.parts.map(p => textWidth(p.name || '', 2.2) + 2.6));
-    indent = Math.max(0, ...score.parts.map(p => textWidth(p.abbreviation || '', 2.0) + 2.6));
+    const PN = TS.partName;
+    firstIndent = Math.max(firstIndent, ...score.parts.map(p => textWidth(p.name || '', PN.size, PN.bold, PN.italic, PN.stack) + 2.6));
+    indent = Math.max(0, ...score.parts.map(p => textWidth(p.abbreviation || '', 2.0 * PN.k, PN.bold, PN.italic, PN.stack) + 2.6));
   }
-  const systems = breakSystems(score, contentW, { firstIndent, indent });
+  const systems = breakSystems(score, contentW, { firstIndent, indent, ts: TS });
   // last system: don't over-stretch a short final system
   const lastSys = systems[systems.length - 1];
   if (lastSys && lastSys.rawStretch > 1.6 && systems.length > 1) {
@@ -49,10 +52,10 @@ export function engrave(score, options = {}) {
       lastSys.usedWidth = x; lastSys.ragged = true;
     }
   }
-  const rendered = systems.map((sys, i) => renderSystem(score, sys, i, staves, options));
+  const rendered = systems.map((sys, i) => renderSystem(score, sys, i, staves, options, TS));
   // --- pagination ---
   const pages = [];
-  const titleH = titleBlockHeight(score);
+  const titleH = titleBlockHeight(score, TS);
   let page = null, y = 0;
   const newPage = () => { page = { systems: [], width: pageW, height: pageH }; pages.push(page); y = margin.top + (pages.length === 1 ? titleH : 0); };
   newPage();
@@ -76,38 +79,48 @@ export function engrave(score, options = {}) {
   });
   if (options.trimHeight) pages.forEach(pg => { const last = pg.systems[pg.systems.length - 1]; if (last) pg.height = Math.min(pg.height, last.pageY + last.bottom + margin.bottom); });
   // --- assemble SVG per page ---
-  const out = pages.map((pg, pi) => assemblePage(score, pg, pi, pages.length, margin, titleH, options));
+  const out = pages.map((pg, pi) => assemblePage(score, pg, pi, pages.length, margin, titleH, options, TS));
   return { pages: out, spMm, pageW, pageH, margin, systems: rendered.length };
 }
 
-function titleBlockHeight(score) {
+function titleBlockHeight(score, TS) {
   const m = score.meta;
   if (!m.title && !m.composer && !m.subtitle && !m.lyricist) return 0;
   let h = 0;
-  if (m.title) h += SP.titleSize * 1.4;
-  if (m.subtitle) h += SP.subtitleSize * 1.4;
-  if (m.composer || m.lyricist || m.arranger) h += SP.composerSize * 1.6;
+  if (m.title) h += TS.title.size * 1.4;
+  if (m.subtitle) h += TS.subtitle.size * 1.4;
+  if (m.composer || m.lyricist || m.arranger) h += creditLineSize(m, TS) * 1.6;
   return h + 3;
 }
+/** Size of the composer / lyricist line: the larger of the styles that are actually shown on it. */
+function creditLineSize(m, TS) {
+  const c = TS.composer.size, l = TS.lyricist.size;
+  if (c === l) return c;
+  return Math.max(m.composer || m.arranger || !m.lyricist ? c : 0, m.lyricist ? l : 0);
+}
+/** font-weight / font-style attributes of a text element (nothing for regular upright text). */
+const emphasis = st => `${st.bold ? ' font-weight="700"' : ''}${st.italic ? ' font-style="italic"' : ''}`;
 
-function assemblePage(score, pg, pi, pageCount, margin, titleH, options) {
+function assemblePage(score, pg, pi, pageCount, margin, titleH, options, TS) {
   const parts = [];
   const glyphs = new Set();
   const geometry = { events: [], measures: [], staves: [], slots: [], systems: [], texts: [], spanners: [] };
   const W = pg.width, H = pg.height;
   parts.push(`<rect class="page-bg" x="0" y="0" width="${f3(W)}" height="${f3(H)}" fill="#fff"/>`);
   if (pi === 0 && titleH) {
-    const m = score.meta; let y = margin.top + SP.titleSize;
+    const T = TS.title, SUB = TS.subtitle, CO = TS.composer, LY = TS.lyricist;
+    const m = score.meta; let y = margin.top + T.size;
     const cx = W / 2;
     // long titles (e.g. a photo's file name) shrink to fit between the margins instead of running off the page
     const avail = W - margin.left - margin.right;
-    const fit = (text, size, bold = false) => { const w = textWidth(text, size, bold) * 1.05; return w > avail ? Math.max(size * 0.45, size * avail / w) : size; };
-    if (m.title) { const fs = fit(m.title, SP.titleSize, true), tw = Math.min(avail, textWidth(m.title, fs, true) * 1.05); parts.push(`<text class="title" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${f3(fs)}" font-weight="700" data-field="title">${escapeXml(m.title)}</text>`); geometry.texts.push({ field: 'title', x: cx - Math.max(20, tw / 2), y: y - SP.titleSize, w: Math.max(40, tw), h: SP.titleSize * 1.2 }); y += SP.subtitleSize * 1.4; }
-    if (m.subtitle) { parts.push(`<text class="subtitle" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${f3(fit(m.subtitle, SP.subtitleSize))}" data-field="subtitle">${escapeXml(m.subtitle)}</text>`); y += SP.subtitleSize * 1.4; }
+    const width = (text, st, size = st.size) => textWidth(text, size, st.bold, st.italic, st.stack);
+    const fit = (text, st) => { const w = width(text, st) * 1.05; return w > avail ? Math.max(st.size * 0.45, st.size * avail / w) : st.size; };
+    if (m.title) { const fs = fit(m.title, T), tw = Math.min(avail, width(m.title, T, fs) * 1.05); parts.push(`<text class="title" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${f3(fs)}"${emphasis(T)} data-field="title">${escapeXml(m.title)}</text>`); geometry.texts.push({ field: 'title', x: cx - Math.max(20, tw / 2), y: y - T.size, w: Math.max(40, tw), h: T.size * 1.2 }); y += SUB.size * 1.4; }
+    if (m.subtitle) { const fs = fit(m.subtitle, SUB), tw = Math.min(avail, width(m.subtitle, SUB, fs)); parts.push(`<text class="subtitle" x="${f3(cx)}" y="${f3(y)}" text-anchor="middle" font-size="${f3(fs)}"${emphasis(SUB)} data-field="subtitle">${escapeXml(m.subtitle)}</text>`); geometry.texts.push({ field: 'subtitle', x: cx - tw / 2, y: y - fs, w: tw, h: fs * 1.2 }); y += SUB.size * 1.4; }
     const ry = margin.top + titleH - 3;
-    if (m.composer) parts.push(`<text class="composer" x="${f3(W - margin.right)}" y="${f3(ry)}" text-anchor="end" font-size="${SP.composerSize}" data-field="composer">${escapeXml(m.composer)}</text>`);
-    if (m.arranger) parts.push(`<text class="composer" x="${f3(W - margin.right)}" y="${f3(ry - SP.composerSize * 1.3)}" text-anchor="end" font-size="${SP.composerSize}" data-field="arranger">${escapeXml(m.arranger)}</text>`);
-    if (m.lyricist) parts.push(`<text class="lyricist" x="${f3(margin.left)}" y="${f3(ry)}" font-size="${SP.composerSize}" data-field="lyricist">${escapeXml(m.lyricist)}</text>`);
+    if (m.composer) { parts.push(`<text class="composer" x="${f3(W - margin.right)}" y="${f3(ry)}" text-anchor="end" font-size="${f3(CO.size)}"${emphasis(CO)} data-field="composer">${escapeXml(m.composer)}</text>`); const tw = width(m.composer, CO); geometry.texts.push({ field: 'composer', x: W - margin.right - tw, y: ry - CO.size, w: tw, h: CO.size * 1.2 }); }
+    if (m.arranger) { parts.push(`<text class="composer" x="${f3(W - margin.right)}" y="${f3(ry - CO.size * 1.3)}" text-anchor="end" font-size="${f3(CO.size)}"${emphasis(CO)} data-field="arranger">${escapeXml(m.arranger)}</text>`); const tw = width(m.arranger, CO); geometry.texts.push({ field: 'arranger', x: W - margin.right - tw, y: ry - CO.size * 2.3, w: tw, h: CO.size * 1.2 }); }
+    if (m.lyricist) { parts.push(`<text class="lyricist" x="${f3(margin.left)}" y="${f3(ry)}" font-size="${f3(LY.size)}"${emphasis(LY)} data-field="lyricist">${escapeXml(m.lyricist)}</text>`); const tw = width(m.lyricist, LY); geometry.texts.push({ field: 'lyricist', x: margin.left, y: ry - LY.size, w: tw, h: LY.size * 1.2 }); }
   }
   for (const rs of pg.systems) {
     const tx = margin.left, ty = rs.pageY;
@@ -130,15 +143,15 @@ function assemblePage(score, pg, pi, pageCount, margin, titleH, options) {
   }
   const defs = `<defs>${[...glyphs].map(n => `<path id="g-${n}" d="${GLYPHS[n].p}"/>`).join('')}</defs>`;
   const F = TEXT_FONT.replace(/"/g, "'");
-  const style = `<style>.score-page text{font-family:${F};fill:#111}.score-page .tab-bg{fill:#fff}.score-page .chord{font-weight:700}.score-page .page-bg{fill:#fff}.score-page line{stroke:#111;stroke-linecap:butt}.score-page path{fill:#111;stroke:none}.score-page path.hairpin,.score-page path.arpeggio,.score-page path.trill-line{fill:none;stroke:#111}.score-page use{fill:#111}.score-page .hidden{opacity:0.25}</style>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${f3(W)} ${f3(H)}" class="score-page" data-page="${pi}">${style}${defs}${parts.join('')}</svg>`;
+  const style = `<style>.score-page text{font-family:${F};fill:#111}.score-page .tab-bg{fill:#fff}.score-page .chord{font-weight:700}.score-page .page-bg{fill:#fff}.score-page line{stroke:#111;stroke-linecap:butt}.score-page path{fill:#111;stroke:none}.score-page path.hairpin,.score-page path.arpeggio,.score-page path.trill-line{fill:none;stroke:#111}.score-page use{fill:#111}.score-page .hidden{opacity:0.25}${TS.css}</style>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${f3(W)} ${f3(H)}" class="score-page${TS.cls ? ' ' + TS.cls : ''}" data-page="${pi}">${style}${defs}${parts.join('')}</svg>`;
   return { width: W, height: H, svg, geometry, index: pi };
 }
 
 // -----------------------------------------------------------------------------
 // System rendering
 // -----------------------------------------------------------------------------
-function renderSystem(score, sys, index, staves, options) {
+function renderSystem(score, sys, index, staves, options, TS = engraveStyles(score)) {
   const n = staves.length;
   const frags = staves.map(() => new Frag());
   const geom = { events: [], measures: [], slots: [], texts: [], spanners: [] };
@@ -201,7 +214,7 @@ function renderSystem(score, sys, index, staves, options) {
     // ties
     drawTies(score, sys, si, events, evGeo, frag, index);
     // slurs & other event spanners
-    drawEventSpanners(score, sys, si, evGeo, frag, index, sh, notesMax, geom);
+    drawEventSpanners(score, sys, si, evGeo, frag, index, sh, notesMax, geom, TS);
     // lyrics
     const lyricEvents = events.map(e => ({ e, ev: findEventIn(score, e) })).filter(x => x.ev?.lyrics?.length);
     const hasLyrics = lyricEvents.length > 0;
@@ -216,25 +229,27 @@ function renderSystem(score, sys, index, staves, options) {
     }
     // lyrics rows
     if (hasLyrics) {
-      const base = Math.max(dynAbove ? notesMax + 1.2 : (dynEvents.length || hairpins.length ? dynY + 1.0 : notesMax + 1.0), sh + 2.4) + SP.lyricSize * 0.9;
+      const LY = TS.lyrics, lyricOpts = { size: LY.size, anchor: 'middle', bold: LY.bold, italic: LY.italic, cls: 'lyric' };
+      const lw = str => textWidth(str, LY.size, LY.bold, LY.italic, LY.stack);
+      const base = Math.max(dynAbove ? notesMax + 1.2 : (dynEvents.length || hairpins.length ? dynY + 1.0 : notesMax + 1.0), sh + 2.4) + LY.size * 0.9;
       const verses = Math.max(...lyricEvents.flatMap(x => x.ev.lyrics.map(l => l.verse || 1)));
       for (let v = 1; v <= verses; v++) {
-        const y = base + (v - 1) * SP.lyricSize * 1.15;
+        const y = base + (v - 1) * LY.size * 1.15;
         const row = lyricEvents.map(x => ({ x, l: x.ev.lyrics.find(l => (l.verse || 1) === v) })).filter(x => x.l);
         row.forEach(({ x, l }, i) => {
           const cx = x.e.xCenter ?? x.e.x;
-          frag.text(cx, y, l.text, { size: SP.lyricSize, anchor: 'middle', cls: 'lyric' });
-          geom.texts.push({ kind: 'lyric', eventId: x.ev.id, verse: v, si, x: cx - textWidth(l.text, SP.lyricSize) / 2, y: y - SP.lyricSize, w: textWidth(l.text, SP.lyricSize), h: SP.lyricSize * 1.2, measureId: x.e.measureId });
+          frag.text(cx, y, l.text, lyricOpts);
+          geom.texts.push({ kind: 'lyric', eventId: x.ev.id, verse: v, si, x: cx - lw(l.text) / 2, y: y - LY.size, w: lw(l.text), h: LY.size * 1.2, measureId: x.e.measureId });
           const next = row[i + 1];
           if ((l.syllabic === 'begin' || l.syllabic === 'middle')) {
-            const x0 = cx + textWidth(l.text, SP.lyricSize) / 2, x1 = next ? (next.x.e.xCenter ?? next.x.e.x) - textWidth(next.l.text, SP.lyricSize) / 2 : (sys.usedWidth || sys.width);
-            if (x1 - x0 > 0.8) frag.text((x0 + x1) / 2, y, '-', { size: SP.lyricSize, anchor: 'middle', cls: 'lyric' });
+            const x0 = cx + lw(l.text) / 2, x1 = next ? (next.x.e.xCenter ?? next.x.e.x) - lw(next.l.text) / 2 : (sys.usedWidth || sys.width);
+            if (x1 - x0 > 0.8 * LY.k) frag.text((x0 + x1) / 2, y, '-', lyricOpts);
           }
           if (l.extend) {
-            const x0 = cx + textWidth(l.text, SP.lyricSize) / 2 + 0.3;
+            const x0 = cx + lw(l.text) / 2 + 0.3 * LY.k;
             const endEv = nextEventAfterTieChain(score, x.ev, evGeo);
             const x1 = endEv ? Math.max(x0 + 1, (endEv.x1 ?? endEv.x) ) : Math.min(x0 + 4, sys.usedWidth || sys.width);
-            frag.line(x0, y, x1, y, 0.14, 'lyric-extend');
+            frag.line(x0, y, x1, y, 0.14 * LY.k, 'lyric-extend');
           }
         });
       }
@@ -243,33 +258,36 @@ function renderSystem(score, sys, index, staves, options) {
     if (si === 0) {
       const chords = sysMeasures.flatMap(({ mm, m }) => (m.chords || []).map(ch => ({ ch, mm, m })));
       if (chords.length) {
+        const CH = TS.chord;
         const cy = Math.min(notesMin - 1.4, -2.6);
         for (const { ch, mm, m } of chords) {
           const slot = geom.slots.find(sl => sl.measureId === m.id && Math.abs(sl.tick - ch.tick) < 1) || geom.slots.find(sl => sl.measureId === m.id);
           const x = slot ? slot.xLeft : mm.x + 2;
-          frag.text(x, cy, prettyChord(ch.text), { size: SP.chordSize, bold: true, cls: 'chord' });
-          geom.texts.push({ kind: 'chord', chordId: ch.id, measureId: m.id, si, x, y: cy - SP.chordSize, w: textWidth(prettyChord(ch.text), SP.chordSize, true), h: SP.chordSize * 1.2 });
-          if (ch.diagram) drawChordDiagram(frag, ch.diagram, x, cy - SP.chordSize - 0.6);
+          frag.text(x, cy, prettyChord(ch.text), { size: CH.size, bold: CH.bold, italic: CH.italic, cls: 'chord' });
+          geom.texts.push({ kind: 'chord', chordId: ch.id, measureId: m.id, si, x, y: cy - CH.size, w: textWidth(prettyChord(ch.text), CH.size, CH.bold, CH.italic, CH.stack), h: CH.size * 1.2 });
+          if (ch.diagram) drawChordDiagram(frag, ch.diagram, x, cy - CH.size - 0.6);
         }
       }
     }
     // measure-level and event-level texts
     for (const { mm, m } of sysMeasures) {
-      for (const t of (m.texts || [])) {
+      for (const [ti, t] of (m.texts || []).entries()) {
         const above = t.placement !== 'below';
-        const y = above ? Math.min(frag.minY, notesMin) - 0.8 : Math.max(frag.maxY, notesMax) + SP.textSize;
+        const st = TS.textObj(t, true);   // the score's `text` style, the text's own `font`, or what its style implies
+        const y = above ? Math.min(frag.minY, notesMin) - 0.8 : Math.max(frag.maxY, notesMax) + st.size;
         if (si !== (t.staffIndex ?? 0)) continue;
-        frag.text(mm.x + 1.0, y, t.text, { size: SP.textSize, italic: t.style === 'expression', bold: t.style === 'system' || t.style === 'technique', cls: 'mtext' });
-        geom.texts.push({ kind: 'mtext', measureId: m.id, si, x: mm.x + 1.0, y: y - SP.textSize, w: textWidth(t.text, SP.textSize), h: SP.textSize * 1.2 });
+        frag.text(mm.x + 1.0, y, t.text, { size: st.size, italic: st.italic, bold: st.bold, cls: 'mtext', family: st.inline });
+        geom.texts.push({ kind: 'mtext', measureId: m.id, index: ti, si, x: mm.x + 1.0, y: y - st.size, w: textWidth(t.text, st.size, st.bold, st.italic, st.stack), h: st.size * 1.2 });
       }
     }
     for (const e of events) {
       const ev = findEventIn(score, e); if (!ev?.texts?.length) continue;
-      for (const t of ev.texts) {
+      for (const [ti, t] of ev.texts.entries()) {
         const above = t.placement !== 'below';
-        const y = above ? Math.min(e.y0, notesMin) - 0.8 : Math.max(e.y1, notesMax) + SP.textSize;
-        frag.text(e.x, y, t.text, { size: SP.textSize, italic: t.style === 'expression', bold: t.style === 'technique', cls: 'etext' });
-        geom.texts.push({ kind: 'text', eventId: ev.id, si, x: e.x, y: y - SP.textSize, w: textWidth(t.text, SP.textSize), h: SP.textSize * 1.2, measureId: e.measureId });
+        const st = TS.textObj(t, false);
+        const y = above ? Math.min(e.y0, notesMin) - 0.8 : Math.max(e.y1, notesMax) + st.size;
+        frag.text(e.x, y, t.text, { size: st.size, italic: st.italic, bold: st.bold, cls: 'etext', family: st.inline });
+        geom.texts.push({ kind: 'text', eventId: ev.id, index: ti, si, x: e.x, y: y - st.size, w: textWidth(t.text, st.size, st.bold, st.italic, st.stack), h: st.size * 1.2, measureId: e.measureId });
       }
       if (ev.ornaments?.length) {
         let oy = Math.min(e.y0, 0) - 1.0;
@@ -287,21 +305,24 @@ function renderSystem(score, sys, index, staves, options) {
         const topY = Math.min(frag.minY, notesMin);
         let y = Math.min(topY - 1.0, -3.0);
         if (m.volta || hasVolta(score, m.id)) y -= 0; // handled below
+        const TP = TS.tempo;
         if (m.tempo && (m.tempo.text || m.tempo.showBpm !== false)) {
-          drawTempo(frag, m.tempo, mm.x + (mm === sys.measures[0] ? mm.metrics.prefix.width + SP.measureLeftPad : 0.6), y - 0.4);
-          geom.texts.push({ kind: 'tempo', measureId: m.id, si: 0, x: mm.x, y: y - 3.2, w: 12, h: 3.4 });
+          drawTempo(frag, m.tempo, mm.x + (mm === sys.measures[0] ? mm.metrics.prefix.width + SP.measureLeftPad : 0.6), y - 0.4, TP);
+          geom.texts.push({ kind: 'tempo', measureId: m.id, si: 0, x: mm.x, y: y - 3.2 * TP.k, w: 12 * TP.k, h: 3.4 * TP.k });
         }
         if (m.rehearsalMark) {
-          const w = Math.max(2.6, textWidth(m.rehearsalMark, SP.rehearsalSize, true) + 1.2);
+          const RH = TS.rehearsal, k = RH.k;   // the box grows with the letter
+          const w = Math.max(2.6 * k, textWidth(m.rehearsalMark, RH.size, RH.bold, RH.italic, RH.stack) + 1.2 * k);
           const rx = mm.x + (mm === sys.measures[0] ? 0 : -w / 2 + 0.2);
-          const ry = (m.tempo ? y - 3.4 : y) - 0.2;
-          frag.rect(rx, ry - 2.7, w, 2.9, 'rehearsal-box', ' fill="none" stroke="#111" stroke-width="0.16"');
-          frag.text(rx + w / 2, ry - 0.5, m.rehearsalMark, { size: SP.rehearsalSize, bold: true, anchor: 'middle', cls: 'rehearsal' });
-          geom.texts.push({ kind: 'rehearsal', measureId: m.id, si: 0, x: rx, y: ry - 2.7, w, h: 2.9 });
+          const ry = (m.tempo ? y - 3.4 * TP.k : y) - 0.2;
+          frag.rect(rx, ry - 2.7 * k, w, 2.9 * k, 'rehearsal-box', ' fill="none" stroke="#111" stroke-width="0.16"');
+          frag.text(rx + w / 2, ry - 0.5 * k, m.rehearsalMark, { size: RH.size, bold: RH.bold, italic: RH.italic, anchor: 'middle', cls: 'rehearsal' });
+          geom.texts.push({ kind: 'rehearsal', measureId: m.id, si: 0, x: rx, y: ry - 2.7 * k, w, h: 2.9 * k });
         }
-        for (const mk of (m.markers || [])) drawMarker(frag, mk, mm, y, sys);
+        for (const mk of (m.markers || [])) drawMarker(frag, mk, mm, y, sys, TS.text);
         if (score.settings.measureNumbers === 'all' || (score.settings.measureNumbers !== 'none' && mm === sys.measures[0] && mm.mi > 0)) {
-          frag.text(mm.x + (mm === sys.measures[0] ? 0 : 0.3), -1.3 + Math.min(0, Math.min(frag.minY, notesMin) + 1.3 > -1.3 ? 0 : 0), String(mm.mi + 1), { size: SP.measureNumberSize, cls: 'measure-number' });
+          const MN = TS.measureNumber;
+          frag.text(mm.x + (mm === sys.measures[0] ? 0 : 0.3), -1.3 + Math.min(0, Math.min(frag.minY, notesMin) + 1.3 > -1.3 ? 0 : 0), String(mm.mi + 1), { size: MN.size, bold: MN.bold, italic: MN.italic, cls: 'measure-number' });
         }
       }
       drawVoltas(score, sys, frag, sysMeasures, Math.min(frag.minY, notesMin));
@@ -338,13 +359,14 @@ function renderSystem(score, sys, index, staves, options) {
       const scaleY = (bottom - top) / (g.b[3] - g.b[1]);
       out.push(`<use href="#g-brace" transform="translate(${f3((sys.indent || 0) - 0.5)} ${f3((top + bottom) / 2)}) scale(1.3 ${f3(scaleY)})"/>`);
     }
+    const PN = TS.partName;
     if (s.staffIndex === 0 && index === 0 && score.parts.length > 1 && (score.settings.showPartNames !== false)) {
       // part name left of the system
-      const cy = staffY[si] + staffHeight(s.staff) / 2 + 0.6;
-      out.push(`<text class="part-name" x="${f3((sys.indent || 0) - 1.5)}" y="${f3(cy)}" text-anchor="end" font-size="2.2">${escapeXml(s.part.name || '')}</text>`);
+      const cy = staffY[si] + staffHeight(s.staff) / 2 + 0.6 * PN.k;
+      out.push(`<text class="part-name" x="${f3((sys.indent || 0) - 1.5)}" y="${f3(cy)}" text-anchor="end" font-size="${f3(PN.size)}"${emphasis(PN)}>${escapeXml(s.part.name || '')}</text>`);
     } else if (s.staffIndex === 0 && index > 0 && score.parts.length > 1 && score.settings.showPartNames !== false && s.part.abbreviation) {
-      const cy = staffY[si] + staffHeight(s.staff) / 2 + 0.6;
-      out.push(`<text class="part-name" x="${f3((sys.indent || 0) - 1.5)}" y="${f3(cy)}" text-anchor="end" font-size="2.0">${escapeXml(s.part.abbreviation)}</text>`);
+      const cy = staffY[si] + staffHeight(s.staff) / 2 + 0.6 * PN.k;
+      out.push(`<text class="part-name" x="${f3((sys.indent || 0) - 1.5)}" y="${f3(cy)}" text-anchor="end" font-size="${PN.k === 1 ? '2.0' : f3(2.0 * PN.k)}"${emphasis(PN)}>${escapeXml(s.part.abbreviation)}</text>`);
     }
   });
   staves.forEach((s, si) => {
@@ -443,37 +465,41 @@ function drawHairpin(score, sys, hp, evGeo, frag, y, sysIndex, geom = null, si =
   if (geom) geom.spanners.push({ id: hp.id, type: hp.type, si, pts: [[x0, y], [x1, y - open / 2], [x1, y + open / 2]], start: [x0, y], end: [x1, y], hasStart: !!a, hasEnd: !!b });
 }
 
-function drawTempo(frag, tempo, x, y) {
+function drawTempo(frag, tempo, x, y, TP) {
   let cx = x;
+  const k = TP.k;   // the little note and its spacing scale with the text size
   frag.add('<g class="tempo">');
-  if (tempo.text) { frag.text(cx, y, tempo.text, { size: SP.tempoSize, bold: true, cls: 'tempo-text' }); cx += textWidth(tempo.text, SP.tempoSize, true) + 1.0; }
+  if (tempo.text) { frag.text(cx, y, tempo.text, { size: TP.size, bold: TP.bold, italic: TP.italic, cls: 'tempo-text' }); cx += textWidth(tempo.text, TP.size, TP.bold, TP.italic, TP.stack) + 1.0 * k; }
   if (tempo.showBpm !== false && tempo.bpm) {
     // small note glyph + "= bpm"
     const base = tempo.beatUnit || 'quarter';
-    const hw = headWidthFor(base) * 0.7;
-    const hy = y - 0.8;
-    frag.use(base === 'whole' ? 'noteheadWhole' : base === 'half' ? 'noteheadHalf' : 'noteheadBlack', cx, hy, 0.7, 'tempo-note');
-    if (base !== 'whole') frag.line(cx + hw - 0.05, hy, cx + hw - 0.05, hy - 2.3, 0.1);
-    if (base === 'eighth') frag.use('flag8thUp', cx + hw - 0.1, hy - 2.3, 0.7);
-    if (tempo.dots) frag.parts.push(`<circle cx="${f3(cx + hw + 0.45)}" cy="${f3(hy - 0.3)}" r="0.18"/>`);
-    cx += hw + (tempo.dots ? 0.9 : 0.5);
-    frag.text(cx + 0.2, y, `= ${tempo.bpm}`, { size: SP.tempoSize * 0.85, cls: 'tempo-bpm' });
+    const sc = 0.7 * k;
+    const hw = headWidthFor(base) * sc;
+    const hy = y - 0.8 * k;
+    frag.use(base === 'whole' ? 'noteheadWhole' : base === 'half' ? 'noteheadHalf' : 'noteheadBlack', cx, hy, sc, 'tempo-note');
+    if (base !== 'whole') frag.line(cx + hw - 0.05 * k, hy, cx + hw - 0.05 * k, hy - 2.3 * k, 0.1 * k);
+    if (base === 'eighth') frag.use('flag8thUp', cx + hw - 0.1 * k, hy - 2.3 * k, sc);
+    if (tempo.dots) frag.parts.push(`<circle cx="${f3(cx + hw + 0.45 * k)}" cy="${f3(hy - 0.3 * k)}" r="${f3(0.18 * k)}"/>`);
+    cx += hw + (tempo.dots ? 0.9 : 0.5) * k;
+    frag.text(cx + 0.2 * k, y, `= ${tempo.bpm}`, { size: TP.size * 0.85, italic: TP.italic, cls: 'tempo-bpm' });
   }
   frag.add('</g>');
 }
-function drawMarker(frag, mk, mm, y, sys) {
+function drawMarker(frag, mk, mm, y, sys, TX) {
   const right = mm.x + mm.width;
+  // repeat words follow the family and the size of the score's `text` style (they stay bold italic)
+  const k = TX ? TX.k : 1, word = size => ({ size: size * k, bold: true, italic: true, anchor: 'end', cls: TX && TX.family ? 'marker-text' : '' });
   switch (mk) {
     case 'segno': frag.use('segno', mm.x + 1.2, y - 0.2, 1, 'marker'); break;
     case 'coda': frag.use('coda', mm.x + 1.2, y - 0.2, 1, 'marker'); break;
-    case 'fine': frag.text(right - 0.5, y - 0.4, 'Fine', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
-    case 'toCoda': frag.text(right - 2.6, y - 0.4, 'To', { size: 2.0, bold: true, italic: true, anchor: 'end' }); frag.use('coda', right - 2.2, y - 0.2, 0.9, 'marker'); break;
-    case 'dsAlCoda': frag.text(right - 0.5, y - 0.4, 'D.S. al Coda', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
-    case 'dsAlFine': frag.text(right - 0.5, y - 0.4, 'D.S. al Fine', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
-    case 'dcAlCoda': frag.text(right - 0.5, y - 0.4, 'D.C. al Coda', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
-    case 'dcAlFine': frag.text(right - 0.5, y - 0.4, 'D.C. al Fine', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
-    case 'dc': frag.text(right - 0.5, y - 0.4, 'D.C.', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
-    case 'ds': frag.text(right - 0.5, y - 0.4, 'D.S.', { size: 2.2, bold: true, italic: true, anchor: 'end' }); break;
+    case 'fine': frag.text(right - 0.5, y - 0.4, 'Fine', word(2.2)); break;
+    case 'toCoda': frag.text(right - 2.6, y - 0.4, 'To', word(2.0)); frag.use('coda', right - 2.2, y - 0.2, 0.9, 'marker'); break;
+    case 'dsAlCoda': frag.text(right - 0.5, y - 0.4, 'D.S. al Coda', word(2.2)); break;
+    case 'dsAlFine': frag.text(right - 0.5, y - 0.4, 'D.S. al Fine', word(2.2)); break;
+    case 'dcAlCoda': frag.text(right - 0.5, y - 0.4, 'D.C. al Coda', word(2.2)); break;
+    case 'dcAlFine': frag.text(right - 0.5, y - 0.4, 'D.C. al Fine', word(2.2)); break;
+    case 'dc': frag.text(right - 0.5, y - 0.4, 'D.C.', word(2.2)); break;
+    case 'ds': frag.text(right - 0.5, y - 0.4, 'D.S.', word(2.2)); break;
   }
   void sys;
 }
@@ -583,7 +609,7 @@ function drawCurve(frag, x0, y0, x1, y1, dir, cls) {
   frag.path(d, cls);
   frag.ext(Math.min(y0, y0 + h * 0.9), Math.max(y0, y0 + h * 0.9));
 }
-function drawEventSpanners(score, sys, si, evGeo, frag, sysIndex, sh, notesMax, geom = null) {
+function drawEventSpanners(score, sys, si, evGeo, frag, sysIndex, sh, notesMax, geom = null, TS = null) {
   const rec = (sp, pts, extra = {}) => { if (geom && pts.length) geom.spanners.push({ id: sp.id, type: sp.type, si, pts, start: pts[0], end: pts[pts.length - 1], ...extra }); };
   const firstMi = sys.measures[0].mi, lastMi = sys.measures[sys.measures.length - 1].mi;
   for (const sp of (score.spanners || [])) {
@@ -645,8 +671,9 @@ function drawEventSpanners(score, sys, si, evGeo, frag, sysIndex, sh, notesMax, 
       case 'textLine': {
         const y = Math.min(a ? a.y0 : 0, 0) - 1.4;
         frag.add(`<g class="sp" data-sp="${sp.id}">`);
-        if (sp.text) frag.text(xStart, y, sp.text, { size: 2.0, italic: true });
-        frag.parts.push(`<line x1="${f3(xStart + textWidth(sp.text || '', 2.0, false, true) + 0.4)}" y1="${f3(y - 0.6)}" x2="${f3(xEnd)}" y2="${f3(y - 0.6)}" stroke-width="0.14" stroke-dasharray="0.8 0.5"/>`);
+        const TX = TS ? TS.text : null, lsz = 2.0 * (TX ? TX.k : 1);   // follows the score's `text` style (stays italic)
+        if (sp.text) frag.text(xStart, y, sp.text, { size: lsz, italic: true, cls: TX && TX.family ? 'line-text' : '' });
+        frag.parts.push(`<line x1="${f3(xStart + textWidth(sp.text || '', lsz, false, true, TX ? TX.stack : undefined) + 0.4)}" y1="${f3(y - 0.6)}" x2="${f3(xEnd)}" y2="${f3(y - 0.6)}" stroke-width="0.14" stroke-dasharray="0.8 0.5"/>`);
         frag.add('</g>');
         rec(sp, [[xStart, y - 0.6], [(xStart + xEnd) / 2, y - 0.6], [xEnd, y - 0.6]]);
         break;

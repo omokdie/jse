@@ -169,6 +169,7 @@ export async function scanDialog(app, ui, { files = null } = {}) {
     const parts = r.querySelector('#scan-parts').value; if (parts !== 'auto') { opts.parts = +parts; if (parts === '2') opts.assumeGrandStaff = true; }
     const ts = r.querySelector('#scan-ts').value; if (ts) { const [n, d] = ts.split('/').map(Number); opts.timeSig = { num: n, den: d }; }
     const key = r.querySelector('#scan-key').value; if (key !== '') opts.keyFifths = +key;
+    if (app.settings.omrLyrics === false) opts.lyrics = false;   // 설정 › 인식 › 가사 읽기
     const title = r.querySelector('#scan-title').value;
     ['#scan-step1', '#scan-step2', '#scan-step4'].forEach(s => { r.querySelector(s).hidden = true; });
     r.querySelector('#scan-step3').hidden = false;
@@ -230,6 +231,7 @@ export async function scanDialog(app, ui, { files = null } = {}) {
     ],
     onOpen: (root, close) => {
       dlgRoot = root; closeDlg = close;
+      root.querySelector('#scan-parts').value = ['1', '2'].includes(String(app.settings.omrParts)) ? String(app.settings.omrParts) : 'auto';   // 설정 › 인식 › 악보 종류
       const btns = root.querySelectorAll('footer button');
       ['close', 'retry', 'more', 'append', 'run', 'apply'].forEach((k, i) => btns[i].dataset.b = k);
       ['retry', 'more', 'append', 'run', 'apply'].forEach(k => { root.querySelector(`[data-b=${k}]`).hidden = true; });
@@ -259,6 +261,7 @@ export async function scanDialog(app, ui, { files = null } = {}) {
     });
   } else {
     if (!(await ui.confirmDiscard())) return;
+    app.applyNewScoreDefaults?.(score);   // paper, margins, staff size, fonts from 설정 › 새 악보 기본값
     app.setScore(score, { fileName: null, dirty: true });
     ui.view.fit('width');
   }

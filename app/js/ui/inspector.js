@@ -5,6 +5,7 @@ import { noteIcon, accidentalIcon, articIcon, icon } from './icons.js';
 import { DURATIONS } from './palette.js';
 import { escapeXml } from '../engrave/text.js';
 import { t } from '../i18n.js';
+import { textStyleSectionHTML, bindTextStyleSection } from './textstyle.js';
 
 const ARTS = ['staccato', 'accent', 'tenuto', 'marcato', 'staccatissimo'];
 const DYNS = ['', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sfz', 'fp'];
@@ -106,8 +107,10 @@ function measureSection(app, r) {
 }
 function textSection(app, sel) {
   const ref = sel.ref;
-  const kindName = { lyric: '가사', chord: '코드 기호', tempo: '템포', rehearsal: '리허설 마크', text: '텍스트', mtext: '텍스트', title: '제목' }[ref.kind] || '텍스트';
-  return `<div class="insp-section"><h4>${kindName}</h4><div class="btn-row"><button class="btn sm" data-act="editText">${icon('pencil')} 편집 (Enter)</button><button class="btn sm danger" data-act="delete">${icon('trash')} 삭제</button></div></div>`;
+  // title-block texts carry `field`, everything else `kind`
+  const kindName = (ref.field ? { title: '제목', subtitle: '부제', composer: '작곡가', arranger: '편곡자', lyricist: '작사가' }[ref.field] : { lyric: '가사', chord: '코드 기호', tempo: '템포', rehearsal: '리허설 마크', text: '텍스트', mtext: '텍스트' }[ref.kind]) || '텍스트';
+  return `<div class="insp-section"><h4>${kindName}</h4><div class="btn-row"><button class="btn sm" data-act="editText">${icon('pencil')} 편집 (Enter)</button>${ref.field ? '' : `<button class="btn sm danger" data-act="delete">${icon('trash')} 삭제</button>`}</div></div>`
+    + textStyleSectionHTML(app, sel);   // font family / size / bold / italic of this kind of text (and of this one text)
 }
 function scoreSection(app) {
   const s = app.score;
@@ -116,6 +119,7 @@ function scoreSection(app) {
     <div class="row"><label>작곡</label><div class="ctl">${escapeXml(s.meta.composer || '-')}</div></div>
     <div class="row"><label>마디</label><div class="ctl">${s.measures.length}마디 · ${effectiveTimeSig(s, 0).num}/${effectiveTimeSig(s, 0).den} · ${KEY_NAMES[effectiveKeySig(s, 0).fifths]}</div></div>
     <div class="row"><label>페이지</label><div class="ctl">${app.layout?.pages?.length || 0}쪽 <button class="btn sm" data-act="pageSetup">${icon('settings')} 페이지 설정</button></div></div>
+    <div class="row"><label>글꼴</label><div class="ctl"><button class="btn sm" data-act="textStyles">${icon('font')} 제목·가사·코드 글꼴</button></div></div>
     ${app.settings.tips ? `<div class="empty-state"><b>시작하기</b><br>· 오선을 더블클릭하면 음표 입력이 시작됩니다 (<span class="kbd">N</span>)<br>· 음표를 클릭해 선택하고 <span class="kbd">↑</span><span class="kbd">↓</span>로 음높이를 바꿉니다<br>· 숫자 <span class="kbd">4</span>~<span class="kbd">7</span>로 음길이, <span class="kbd">0</span>은 쉼표<br>· <span class="kbd">Ctrl+L</span> 가사, <span class="kbd">Ctrl+K</span> 코드, <span class="kbd">Space</span> 재생</div>` : ''}
   </div>`;
 }
@@ -200,7 +204,9 @@ function bind(el, app, ui, sel) {
       case 'editText': ui.editText(sel.ref); break;
       case 'meta': ui.metaDialog(); break;
       case 'pageSetup': ui.pageSetupDialog(); break;
+      case 'textStyles': ui.textStyles?.(); break;
       case 'instruments': ui.instrumentsDialog(); break;
     }
   }));
+  if (sel.type === 'text') bindTextStyleSection(el, app, ui, sel);
 }

@@ -31,6 +31,8 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+  // on-demand "JSE 글꼴" (fonts/web/): never in this cache — app/js/fonts.js keeps the ones in use in IndexedDB
+  if (url.pathname.includes('/fonts/web/')) return;
   // version.json: network first (update checks)
   if (url.pathname.endsWith('version.json')) { e.respondWith(fetch(req).catch(() => caches.match(req))); return; }
   e.respondWith((async () => {

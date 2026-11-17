@@ -4,6 +4,7 @@
 import { durTicks, measureCapacity, effectiveTimeSig, effectiveKeySig, effectiveClef, staffList, totalStaffCount, DUR_TICKS } from '../model/score.js';
 import { GLYPHS } from './glyphs.js';
 import { textWidth } from './text.js';
+import { engraveStyles } from './styles.js';
 
 export const SP = {
   headBlack: GLYPHS.noteheadBlack.w, headHalf: GLYPHS.noteheadHalf.w, headWhole: GLYPHS.noteheadWhole.w,
@@ -78,6 +79,7 @@ export function measureMetrics(score, mi, ctx) {
   const ts = effectiveTimeSig(score, mi);
   const capacity = measureCapacity(ts);
   const staves = staffList(score);
+  const TS = ctx.ts || engraveStyles(score), LY = TS.lyrics, CH = TS.chord;   // text styles (model/textstyles.js)
   // 1. gather onsets
   const slotMap = new Map();  // key → slot
   const keyOf = (tick, graceIdx, graceCount) => (graceCount ? tick - (graceCount - graceIdx) * 0.01 : tick);
@@ -114,8 +116,8 @@ export function measureMetrics(score, mi, ctx) {
       if (ev.dur.dots) right = Math.max(right, SP.dotGap + ev.dur.dots * (SP.dotRadius * 2 + 0.35));
       // lyrics need room centred on the head
       if (ev.lyrics?.length) {
-        const lw = Math.max(...ev.lyrics.map(l => textWidth(l.text || '', SP.lyricSize) + (l.syllabic === 'begin' || l.syllabic === 'middle' ? 0.6 : 0)));
-        const half = lw / 2 - core / 2 + 0.25;
+        const lw = Math.max(...ev.lyrics.map(l => textWidth(l.text || '', LY.size, LY.bold, LY.italic, LY.stack) + (l.syllabic === 'begin' || l.syllabic === 'middle' ? 0.6 * LY.k : 0)));
+        const half = lw / 2 - core / 2 + 0.25 * LY.k;
         if (half > 0) { left = Math.max(left, half); right = Math.max(right, half); }
       }
       slot.left = Math.max(slot.left, left); slot.core = Math.max(slot.core, core); slot.right = Math.max(slot.right, right);
@@ -126,7 +128,7 @@ export function measureMetrics(score, mi, ctx) {
   (m.chords || []).forEach(ch => {
     if (!slotMap.has(ch.tick)) slotMap.set(ch.tick, { key: ch.tick, tick: ch.tick, grace: false, left: 0, core: 0, right: 0, gap: 0, events: [], virtual: true });
     const slot = slotMap.get(ch.tick);
-    const cw = textWidth(ch.text || '', SP.chordSize, true) + 0.8;
+    const cw = textWidth(ch.text || '', CH.size, CH.bold, CH.italic, CH.stack) + 0.8 * CH.k;
     slot.right = Math.max(slot.right, cw - slot.core);
   });
   const slots = [...slotMap.values()].sort((a, b) => a.key - b.key);
@@ -255,14 +257,15 @@ export function stemUpGuess(ev, poss) {
  * Break measures into systems for a given available width.
  * Returns [{ measures: [{ mi, metrics, x, width, stretch }], width, start, end }]
  */
-export function breakSystems(score, availWidth, { firstIndent = 0, indent = 0 } = {}) {
+export function breakSystems(score, availWidth, { firstIndent = 0, indent = 0, ts = null } = {}) {
+  ts = ts || engraveStyles(score);
   const systems = [];
   let cur = null;
   const flush = () => { if (cur && cur.measures.length) { justify(cur); systems.push(cur); } cur = null; };
   for (let mi = 0; mi < score.measures.length; mi++) {
     const m = score.measures[mi];
     if (!cur) { const ind = systems.length === 0 ? firstIndent : indent; cur = { measures: [], width: availWidth - ind, indent: ind }; }
-    const metrics = measureMetrics(score, mi, { systemStart: cur.measures.length === 0 });
+    const metrics = measureMetrics(score, mi, { systemStart: cur.measures.length === 0, ts });
     const used = cur.measures.reduce((a, x) => a + x.metrics.minWidth, 0);
     if (cur.measures.length && used + metrics.minWidth > cur.width) {
       flush();
