@@ -109,7 +109,7 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 | NWC 저장 | `.nwctxt` · `.nwc` 2.75 · `.nwc` 1.75 모두 794개 악보 내보내기 성공, 다시 읽어 대조. 2.75·nwctxt는 공개 판독기 3종(nwc2musicxml, nwc2ly, nwc-viewer)이 읽음 | **NoteWorthy Composer 프로그램 자체로는 열어 보지 못함**(구할 수 없었음). 특히 1.75 형식은 판독기가 해석하지 않는 바이트를 흔한 값으로 채워 "실험적"으로 표시 |
 | Sibelius | `.sib`는 비공개·암호화 형식이라 직접 지원 불가 → 열려고 하면 Sibelius에서 MusicXML로 내보내는 방법을 안내, 저장은 "Sibelius용 (MusicXML)" | 실제 Sibelius로 여는 것 |
 | MusicXML 가져오기(다른 프로그램의 공통 경로) | 이번에 고침(아래). MuseScore 원본과 대조: 같은 자리·같은 음 99.36 % → 99.93 %, 완전히 같은 곡 753 → 833 / 842 | 부분마다 박자가 다른 곡(MusicXML은 부분별 박자, JSE는 마디별 하나) |
-| 글꼴 | 단위 테스트 20개 + 브라우저(대화상자·취소·실행 취소·내려받기·오프라인·PNG/JPG/PDF/SVG에 글꼴 담기). 글꼴을 안 바꾼 악보의 조판 결과는 v1.0.8과 바이트 단위로 같음(42곡) | Electron 안의 기기 글꼴 목록(`queryLocalFonts`), github.io에서 실제 내려받기(배포 후 확인), 실제 Android 기기 |
+| 글꼴 | 단위 테스트 20개 + 브라우저(대화상자·취소·실행 취소·내려받기·오프라인·PNG/JPG/PDF/SVG에 글꼴 담기). 글꼴을 안 바꾼 악보의 조판 결과는 v1.0.8과 바이트 단위로 같음(42곡). 배포 후 github.io에서 브라우저로 내려받기 확인 | Electron 안의 기기 글꼴 목록(`queryLocalFonts`), 실제 Android 기기(앱 안에서 github.io 글꼴 내려받기 포함) |
 | 설정 | 단위 테스트 23개(항목·이전 값 옮기기·Electron 셸·Android 심) + 브라우저(PC·휴대폰·태블릿 화면, 검색, 저장·복원, 가짜 Windows/Android 셸) | **실제 Windows·Android 빌드에서의 동작**(창 위치 기억, 닫기 확인, 화면 켜짐, 전체 화면, 방향, 진동, 뒤로 버튼) — CI 빌드가 통과하는 것까지만 확인. 점검표: `tools/settings/README.md` "What main must check in the CI builds" |
 
 **이번에 함께 고친 공용 코드** (다른 프로그램 파일을 대량으로 대조하다 드러난 것, 테스트 `musicxml.test.js` · `playback.test.js`)
@@ -124,7 +124,7 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 * Windows: MuseScore·NWC 파일은 **연결 프로그램 목록에만** JSE를 올리고 기본 프로그램은 바꾸지 않음(`electron/build/installer.nsh`). `.ssnap`·`.musx`는 전과 같이 JSE로 열림.
 * JSE 글꼴 7종(SIL OFL 1.1)은 원본 그대로(이름·내용 수정 없이 WOFF 포장만) `app/fonts/web/`에 두고 Pages에서만 제공. 설치 파일·APK 크기는 그대로.
 
-**v1.1.0 배포 확인** (커밋 `a8e0d83`): Actions의 Pages·Release 워크플로 모두 성공(Windows NSIS — `installer.nsh` 포함 — 와 Android 플러그인 컴파일 통과). 릴리스 자산 `JSE-Setup-1.1.0.exe` 84.8 MB · `JSE-1.1.0.apk` 6.0 MB · `latest.yml` · blockmap. APK 서명 지문 `55:8D:D9:07:…:10:55`(정식 키), APK 안에 글꼴 파일 없음·진동 권한과 `.mscz`/`.nwc` 연결 있음. Pages `version.json` = 1.1.0(`android.minNative` 1.1.0, 웹 묶음 3.1 MB), `fonts/web/manifest.json`과 글꼴 파일이 CORS 허용(`access-control-allow-origin: *`)으로 제공되고 SHA-256이 저장소와 같음. 미리보기 아티팩트도 1.1.0으로 다시 게시.
+**v1.1.0 배포 확인** (커밋 `a8e0d83`): Actions의 Pages·Release 워크플로 모두 성공(Windows NSIS — `installer.nsh` 포함 — 와 Android 플러그인 컴파일 통과). 릴리스 자산 `JSE-Setup-1.1.0.exe` 84.8 MB · `JSE-1.1.0.apk` 6.0 MB · `latest.yml` · blockmap. APK 서명 지문 `55:8D:D9:07:…:10:55`(정식 키), APK 안에 글꼴 파일 없음·진동 권한과 `.mscz`/`.nwc` 연결 있음. Pages `version.json` = 1.1.0(`android.minNative` 1.1.0, 웹 묶음 3.1 MB), `fonts/web/manifest.json`과 글꼴 파일이 CORS 허용(`access-control-allow-origin: *`)으로 제공되고 SHA-256이 저장소와 같음. 미리보기 아티팩트도 1.1.0으로 다시 게시. 배포된 웹앱(https://omokdie.github.io/jse/)을 Chromium으로 직접 열어 확인(PC·휴대폰 화면, 2026-11-18): 버전 1.1.0, 설정 창(웹 앱 항목 포함), JSE 글꼴(나눔명조)을 내려받아 적용, `.mscz`(MuseScore 3·4)·`.nwc` 파일 열기와 같은 형식으로 다시 저장 — 콘솔 오류·실패한 요청 없음.
 
 **알려진 한계 / 다음에 할 만한 것**
 * NWC: 실제 NoteWorthy Composer(특히 1.75)에서 열어 보기. 셋잇단 외 잇단음표·8va 선·3성부 이상은 근사.
