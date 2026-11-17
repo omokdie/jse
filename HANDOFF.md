@@ -13,7 +13,7 @@
 | 4 | 복사·붙여넣기, 여러 페이지 한눈에 보기 등 편의 기능 | ✅ 보기 5종, 범위 끌어서 복사, 반복, 자동저장 등 |
 | 5 | 모바일: 같은 파일, 모바일에 맞는 UI | ✅ 휴대폰·**태블릿**·PC 화면 자동 전환 (`native.js classifyLayout`) |
 | 6 | 인터넷 연결 시 자동 업데이트 + 완료 표시 | ✅ 웹(테스트 통과) · Windows(electron-updater, GitHub Releases) · Android(웹 번들 OTA) |
-| 7 | Windows 설치형 exe, Android apk | ✅ GitHub Actions에서 실제 빌드 성공 (exe 84MB, apk 5MB) |
+| 7 | Windows 설치형 exe, Android apk | ✅ GitHub Actions에서 실제 빌드 성공 (v1.1.0: exe 85MB, apk 6MB) |
 | 8 | 가사·기타 코드·드럼 악보 등 모든 요소 편집 | ✅ |
 | 9 | 리퀴드 글라스 UI, 아이콘 직접 그리기 | ✅ |
 | 10 | 창 최소화/최대화/닫기 버튼 | ✅ |
@@ -27,7 +27,6 @@
 | 18 | 여러 사진으로 학습해 인식 정확도 개선 (사용자 목표: 사진 90%) | 🔶 6차까지 학습 후 사용자 요청으로 종료(v1.0.8). 마지막 보류 세트 holdout6 사진 음높이 88.3%·박자 87.1%(스캔 95.5 · 평평 93.5 · 휜 페이지 90.9 · 저해상도 68.2%) — 단, 이 세트는 쉬운 편(64쪽 중 33쪽이 다장조)이고 더 어려운 holdout5 사진은 77.6 / 81.0%. 1차 대비: 사진 음높이 약 52%→78~88%. 이어서 할 일은 `tools/omr/IMPROVEMENTS.md` 끝의 "Where to continue" (§4) |
 | 19 | GitHub 설정 | ✅ 저장소·Pages·Actions·Android 정식 서명 키(Secrets) — v1.0.2 APK부터 정식 키(지문 55:8D:…:10:55) |
 | 20 | MP3(음원)로 악보 만들기 | ✅ `audio/*` + `ui/audioflow.js` (파일 메뉴 · 상단 '음원으로 악보' · 도구 막대 · 시작 화면 · 파일 열기/끌어 놓기 · 휴대폰 보조 버튼). Basic Pitch 그래프를 순수 JS+WASM SIMD로 실행. 합성 보류 세트 음표 F1 멜로디 93 % / 피아노 84 %, 악보 음표(음높이+위치) 57 % / 75 % (빠르기를 맞힌 경우 83 % / 91 %), 4분 곡 약 11초. 학습·평가: `tools/audio/README.md` |
-
 | 21 | 가사·제목·코드의 글꼴 크기와 종류 변경 | ✅ v1.1.0 — 악보 → 글꼴…(휴대폰 ⋯ 메뉴), 글자 오른쪽 클릭 → 글꼴 바꾸기…, 속성 패널. 글자 종류 11가지 × 글꼴·크기(pt)·굵게·기울임, 글자 하나만 따로, 새 악보 기본값. 글꼴: 기본 · 이 기기의 글꼴 · JSE 글꼴 7종(처음 쓸 때 내려받음). SPEC §2b, `tools/fonts/README.md` |
 | 22 | Sibelius·MuseScore·NWC 등 다른 프로그램 파일 열기 + 각 프로그램 확장자로 저장 | ✅ v1.1.0 — MuseScore `.mscz/.mscx` 열기·저장, NWC `.nwc/.nwctxt` 열기·저장(1.75 저장은 실험적). 🔶 Sibelius `.sib`는 직접 읽고 쓸 수 없음(비공개·암호화 형식) → MusicXML 경유 안내 + "Sibelius용 (MusicXML)" 내보내기. SPEC §5d–5f, §5 아래 검증 결과 |
 | 23 | 설정을 더 자세하고 편하게, 플랫폼별로 | ✅ v1.1.0 — 검색되는 설정 창(약 70개 항목, 13개 구역), Windows 앱·Android 앱·웹 앱 전용 구역. SPEC §9, `tools/settings/README.md` |
@@ -124,6 +123,8 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 * `release.json`의 `androidMinNative`를 1.1.0으로 올림: Android 네이티브 코드(설정용 플러그인 메서드, 진동 권한, 파일 연결)가 바뀌어, 이전 APK 사용자는 앱이 새 APK 설치를 안내함(같은 서명 키라 덮어 설치).
 * Windows: MuseScore·NWC 파일은 **연결 프로그램 목록에만** JSE를 올리고 기본 프로그램은 바꾸지 않음(`electron/build/installer.nsh`). `.ssnap`·`.musx`는 전과 같이 JSE로 열림.
 * JSE 글꼴 7종(SIL OFL 1.1)은 원본 그대로(이름·내용 수정 없이 WOFF 포장만) `app/fonts/web/`에 두고 Pages에서만 제공. 설치 파일·APK 크기는 그대로.
+
+**v1.1.0 배포 확인** (커밋 `a8e0d83`): Actions의 Pages·Release 워크플로 모두 성공(Windows NSIS — `installer.nsh` 포함 — 와 Android 플러그인 컴파일 통과). 릴리스 자산 `JSE-Setup-1.1.0.exe` 84.8 MB · `JSE-1.1.0.apk` 6.0 MB · `latest.yml` · blockmap. APK 서명 지문 `55:8D:D9:07:…:10:55`(정식 키), APK 안에 글꼴 파일 없음·진동 권한과 `.mscz`/`.nwc` 연결 있음. Pages `version.json` = 1.1.0(`android.minNative` 1.1.0, 웹 묶음 3.1 MB), `fonts/web/manifest.json`과 글꼴 파일이 CORS 허용(`access-control-allow-origin: *`)으로 제공되고 SHA-256이 저장소와 같음. 미리보기 아티팩트도 1.1.0으로 다시 게시.
 
 **알려진 한계 / 다음에 할 만한 것**
 * NWC: 실제 NoteWorthy Composer(특히 1.75)에서 열어 보기. 셋잇단 외 잇단음표·8va 선·3성부 이상은 근사.
