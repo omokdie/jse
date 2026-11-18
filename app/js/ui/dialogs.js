@@ -14,9 +14,10 @@ export function modalCount(delta) { openCount = Math.max(0, openCount + delta); 
 
 /**
  * Show a modal. Returns a promise resolving with the value passed to close(value).
- * opts: { title, body (html), buttons:[{label, value, primary, danger}], wide, onOpen(root, close) }
+ * opts: { title, body (html), buttons:[{label, value, primary, danger}], wide, onOpen(root, close),
+ *         initialFocus: selector to focus first (default: the first field or the primary button) · false = none }
  */
-export function showDialog({ title, body, buttons = [{ label: t('ok'), value: true, primary: true }], wide = false, onOpen = null, closable = true }) {
+export function showDialog({ title, body, buttons = [{ label: t('ok'), value: true, primary: true }], wide = false, onOpen = null, closable = true, initialFocus = null }) {
   return new Promise(resolve => {
     const back = document.createElement('div'); back.className = 'dialog-backdrop';
     back.innerHTML = `<div class="dialog ${wide ? 'wide' : ''}" role="dialog" aria-modal="true"><header><span>${title}</span>${closable ? `<button class="x" aria-label="${t('close')}">×</button>` : ''}</header><div class="content">${body}</div>${buttons.length ? `<footer>${buttons.map((b, i) => `<button class="btn ${b.primary ? 'primary' : ''} ${b.danger ? 'danger' : ''}" data-i="${i}">${b.label}</button>`).join('')}</footer>` : ''}</div>`;
@@ -27,11 +28,39 @@ export function showDialog({ title, body, buttons = [{ label: t('ok'), value: tr
     back.querySelectorAll('footer button').forEach(b => b.addEventListener('click', () => { const def = buttons[+b.dataset.i]; const v = typeof def.value === 'function' ? def.value(back) : def.value; if (v !== undefined) close(v); }));
     back.addEventListener('keydown', e => { if (e.key === 'Escape' && closable) { e.stopPropagation(); close(null); } if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && !e.isComposing) { const p = buttons.find(b => b.primary); if (p) { e.preventDefault(); const v = typeof p.value === 'function' ? p.value(back) : p.value; if (v !== undefined) close(v); } } });
     onOpen?.(back, close);
-    const first = back.querySelector('input,select,textarea,button.primary'); first?.focus();
+    const first = initialFocus === false ? null : back.querySelector(initialFocus || 'input,select,textarea,button.primary'); first?.focus();
   });
 }
 export const alertDialog = (title, msg) => showDialog({ title, body: `<p>${msg}</p>` });
 export const confirmDialog = (title, msg, okLabel = t('ok')) => showDialog({ title, body: `<p>${msg}</p>`, buttons: [{ label: t('cancel'), value: false }, { label: okLabel, value: true, primary: true }] });
+/**
+ * Ask for a file name where no system save dialog will appear (Android app, browsers without a save picker).
+ * Resolves to the cleaned base name (no extension) or null when cancelled.
+ */
+export async function fileNameDialog({ title = '저장', base = '', ext = '', where = '', okLabel = '저장' } = {}) {
+  const { cleanFileBase, fileBaseFromInput, hasBadFileChars, BAD_CHARS_TEXT } = await import('../io/filename.js');
+  const touch = document.documentElement.classList.contains('touch');
+  const body = `<div class="fn-dlg">
+    <div class="name-field"><input type="text" id="fn-name" value="${escapeXml(base)}" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="done" maxlength="160" aria-label="파일 이름" aria-describedby="fn-note"><span class="name-ext">${escapeXml(ext)}</span></div>
+    <p class="name-note" id="fn-note"></p></div>`;
+  const note = root => {
+    const typed = root.querySelector('#fn-name').value, el = root.querySelector('#fn-note');
+    const bad = hasBadFileChars(typed);
+    el.textContent = bad ? `파일 이름에 쓸 수 없는 글자(${BAD_CHARS_TEXT})는 _ 로 바꿔 저장합니다.`
+      : !cleanFileBase(typed) ? `이름을 비워 두면 "${base}"(으)로 저장합니다.`
+      : where ? `저장 위치: ${where}` : '';
+    el.classList.toggle('warn', bad); el.hidden = !el.textContent;
+  };
+  const typed = await showDialog({ title, body, initialFocus: touch ? false : '#fn-name',
+    buttons: [{ label: t('cancel'), value: null }, { label: okLabel, primary: true, value: r => r.querySelector('#fn-name').value }],
+    onOpen: root => {
+      const input = root.querySelector('#fn-name');
+      input.addEventListener('input', () => note(root));
+      input.addEventListener('focus', () => { if (input.dataset.picked) return; input.dataset.picked = '1'; setTimeout(() => input.select(), 0); });
+      note(root);
+    } });
+  return typed == null ? null : fileBaseFromInput(typed, base);
+}
 export const promptDialog = (title, label, value = '', { placeholder = '', hint = '' } = {}) => showDialog({ title, body: `<div class="row"><label>${label}</label><div class="ctl"><input type="text" id="pd-v" value="${escapeXml(value)}" placeholder="${placeholder}"></div></div>${hint ? `<p>${hint}</p>` : ''}`, buttons: [{ label: t('cancel'), value: null }, { label: t('ok'), primary: true, value: r => r.querySelector('#pd-v').value }] });
 
 // ---------------------------------------------------------------------------

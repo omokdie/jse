@@ -70,15 +70,30 @@ export async function blobToBase64(blob) {
 }
 export function base64ToBytes(b64) { const bin = atob(b64); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
 
+/** Where saveBlob puts a file when asked to show a dialog:
+ *  'dialog' (Windows/Mac app, desktop Chrome/Edge: the system save dialog, the name can be changed there) ·
+ *  'android' (Download/JSE folder, no dialog) · 'download' (the browser's download folder, no dialog) · 'blocked' (preview page). */
+export function saveDestination() {
+  const n = native();
+  if (n?.saveFile) return n.platform === 'android' ? 'android' : 'dialog';
+  if (globalThis.JSE_PREVIEW) return 'blocked';
+  if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function') return 'dialog';
+  return 'download';
+}
+/** Where a file goes when no save dialog appears, in words — for the name field's note. */
+export function saveDestinationText(dest = saveDestination()) {
+  return dest === 'android' ? '다운로드 › JSE 폴더' : dest === 'download' ? '브라우저의 다운로드 폴더' : '';
+}
+
 /** Save a blob: native shim → File System Access (desktop browsers) → download. Returns {path|handle|download}. */
 export async function saveBlob(blob, name, { mime = blob.type, suggestDialog = true, handle = null, types = null } = {}) {
   const n = native();
   if (n?.saveFile) {
     const base64 = await blobToBase64(blob);
     const r = await n.saveFile({ name, mime, base64, suggestDialog });
-    return r ? { path: r.path } : null;
+    return r ? { path: r.path, name: r.name || null } : null;
   }
-  if ('showSaveFilePicker' in window && (suggestDialog || handle) && !globalThis.JSE_PREVIEW) {
+  if (typeof window.showSaveFilePicker === 'function' && (suggestDialog || handle) && !globalThis.JSE_PREVIEW) {
     try {
       let h = handle;
       if (!h || suggestDialog) h = await window.showSaveFilePicker({ suggestedName: name, types: types || [{ description: name.split('.').pop().toUpperCase(), accept: { [mime || 'application/octet-stream']: ['.' + name.split('.').pop()] } }] });

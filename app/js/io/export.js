@@ -82,10 +82,7 @@ export async function zipBlobs(files, JSZip = globalThis.JSZip) {
   for (const f of files) zip.file(f.name, f.blob);
   return zip.generateAsync({ type: 'blob' });
 }
-export function safeFileName(name, ext) {
-  const base = (name || 'score').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'score';
-  return base.toLowerCase().endsWith(ext) ? base : base + ext;
-}
+export { safeFileName } from './filename.js';
 export function printLayout(layout) {
   const w = window.open('', '_blank');
   if (!w) return false;

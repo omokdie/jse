@@ -178,6 +178,15 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .row .ctl { flex: 1; display: flex; gap: 4px; align-items: center; min-width: 0; flex-wrap: wrap; }
 .row input[type=text], .row input[type=number], .row input[type=search], .row select, .row textarea { width: 100%; border: 1px solid var(--field-stroke); border-radius: var(--r-s); padding: 6px 9px; background: var(--field); min-width: 0; }
 .row input[type=number] { width: 72px; }
+/* file name + extension (내보내기 · 다른 이름으로 저장) */
+.name-field { display: flex; align-items: stretch; border: 1px solid var(--field-stroke); border-radius: var(--r-s); background: var(--field); overflow: hidden; }
+.name-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.name-field input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; padding: 8px 10px; font: inherit; font-size: 14px; color: var(--text); outline: none; }
+.name-field input:focus-visible { outline: none; }
+.name-ext { flex: 0 0 auto; display: flex; align-items: center; max-width: 46%; padding: 0 10px; border-left: 1px solid var(--field-stroke); color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name-note { margin: 5px 2px 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.name-note.warn { color: var(--warn); }
+html.phone .name-field input { font-size: 16px; }  /* ≥ 16 px: phones don't zoom into the field */
 .row textarea { resize: vertical; min-height: 54px; }
 .row input[type=range] { width: 100%; accent-color: var(--accent); }
 input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
@@ -247,6 +256,7 @@ input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
 .card b { font-size: 13px; }
 .card span { font-size: 11px; color: var(--muted); }
 .checkbox { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.row .ctl label.checkbox { flex: 0 1 auto; color: var(--text); font-size: 13px; }   /* not the row's fixed-width caption */
 .toasts { position: fixed; left: 50%; bottom: calc(60px + var(--sab)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 100; pointer-events: none; align-items: center; }
 .toast { background: var(--glass-2); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border: 1px solid var(--glass-stroke); color: var(--text); padding: 10px 18px; border-radius: 999px; font-size: 13px; box-shadow: var(--glass-shadow); max-width: min(560px, calc(100vw - 32px)); display: flex; gap: 10px; align-items: center; pointer-events: auto; animation: toast-in .22s cubic-bezier(.2,.8,.2,1); font-weight: 500; }
 .toast::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }

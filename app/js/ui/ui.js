@@ -16,10 +16,11 @@ import { groupHTML, bindGroups, closeFlyout } from './flyout.js';
 import { groupFactory } from './groups.js';
 import { writeSsnap, readSsnap, sniffFile, FOREIGN_SCORE_FORMATS } from '../io/ssnap.js';
 import { storage } from '../io/storage.js';
-import { rasterizePage, canvasToBlob, safeFileName, printLayout } from '../io/export.js';
+import { rasterizePage, canvasToBlob, printLayout } from '../io/export.js';
+import { safeFileName, defaultFileBase, savedFileLabel } from '../io/filename.js';
 import { Player } from '../playback/synth.js';
 import { Updater } from '../update.js';
-import { saveBlob, pickFiles, onNativeOpenFile, isMobileLayout, native, shareBlob } from '../native.js';
+import { saveBlob, pickFiles, onNativeOpenFile, isMobileLayout, native, shareBlob, saveDestination, saveDestinationText } from '../native.js';
 import { PianoKeyboard } from './pianokb.js';
 import { exportDialog } from './exportdlg.js';
 import { scanDialog } from './omrflow.js';
@@ -623,6 +624,7 @@ export class UI {
         { label: 'MuseScore 파일 (.mscz)', icon: 'file', onClick: () => this.exportDialog('musescore') },
         { label: 'NWC 파일 (.nwc)', icon: 'file', onClick: () => this.exportDialog('nwc') },
         { label: 'Sibelius용 (MusicXML)', icon: 'file', onClick: () => this.exportDialog('sibelius') },
+        { label: 'Finale 파일 (.musx)', icon: 'file', onClick: () => this.exportDialog('musx') },
         { label: 'Finale용 (MusicXML)', icon: 'file', onClick: () => this.exportDialog('finale') },
         { label: 'MusicXML (그 밖의 프로그램)', icon: 'file', onClick: () => this.exportDialog('musicxml') },
         { sep: true },
@@ -1187,7 +1189,17 @@ export class UI {
   async saveAs() { return this.saveInternal(true); }
   async saveInternal(asNew) {
     const app = this.app;
-    const name = safeFileName(app.fileName?.replace(/\.[^.]+$/, '') || app.score.meta.title || 'score', '.ssnap');
+    let base = defaultFileBase({ fileName: app.fileName, title: app.score.meta.title });
+    // The Android app and browsers without a save picker show no system save dialog — ask for the name here
+    // (다른 이름으로 저장, and the first save of a score); elsewhere the system dialog lets the name be changed.
+    const dest = saveDestination();
+    if ((asNew || (!app.fileHandle && !app.savedOnce)) && (dest === 'android' || dest === 'download')) {
+      const where = saveDestinationText(dest) + (dest === 'android' ? ' · 같은 이름의 파일이 있으면 이름 뒤에 번호가 붙습니다.' : '');
+      const typed = await D.fileNameDialog({ title: asNew ? t('saveAs') : t('save'), base, ext: '.ssnap', where });
+      if (typed == null) return false;
+      base = typed;
+    }
+    const name = safeFileName(base, '.ssnap');
     try {
       const blob = await writeSsnap(this.scoreForFile(), { thumbnailBlob: await this.thumbnail(), appVersion: this.version });
       const res = await saveBlob(blob, name, { mime: 'application/x-scoresnap', suggestDialog: asNew || (!app.fileHandle && !app.savedOnce), handle: asNew ? null : app.fileHandle, types: [{ description: 'JSE 악보', accept: { 'application/x-scoresnap': ['.ssnap'] } }] });
@@ -1196,7 +1208,7 @@ export class UI {
       if (res.handle) { app.fileHandle = res.handle; app.fileName = res.name; } else if (res.path) app.fileName = res.path.split(/[\\/]/).pop(); else app.fileName = name;
       app.dirty = false; app.emit('dirty');
       storage.addRecent({ id: app.fileName, name: app.fileName, title: app.score.meta.title });
-      this.toast(res.download ? `${app.fileName} 파일을 다운로드했습니다` : `${t('saved')} — ${app.fileName}`, 'ok');
+      this.toast(res.download ? `${app.fileName} 파일을 다운로드했습니다` : `${t('saved')} — ${savedFileLabel(res, app.fileName)}`, 'ok');
       return true;
     } catch (e) { console.error(e); this.toast('저장 실패: ' + e.message, 'error'); return false; }
   }

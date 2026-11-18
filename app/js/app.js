@@ -58,7 +58,7 @@ export class App extends EventTarget {
     this.fileName = fileName;
     this.fileHandle = fileHandle;
     this.dirty = dirty;
-    if (!keepHistory) { this.history.undo = []; this.history.redo = []; }
+    if (!keepHistory) { this.history.undo = []; this.history.redo = []; this.exportName = null; }   // exportName: last name chosen in 내보내기 for this document
     this.selection = { type: 'none' };
     this.cursor = null;
     this.relayout();
