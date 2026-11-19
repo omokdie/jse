@@ -162,6 +162,8 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 * 다음에 할 것: 실제 Finale 26/27에서 내보낸 파일 몇 개 열어 보기 → 문제 없으면 "실험적" 떼기.
 * Android 네이티브 코드는 바뀌지 않음 → `androidMinNative` 1.1.0 유지(웹 묶음 OTA로 전달). Windows는 설치 파일 업데이트.
 
+**v1.2.0 배포 확인** (커밋 `3527ee6`, 2026-11-19 10:27 KST): Pages·Release 워크플로 성공. 릴리스 자산 `JSE-Setup-1.2.0.exe` 84.8 MB(SHA-512가 `latest.yml`과 일치) · `JSE-1.2.0.apk` 6.1 MB(정식 키 `55:8D:…:10:55`, 새 모듈 포함, 글꼴 없음) · blockmap · `latest.yml`, GitHub 최신 릴리스 = v1.2.0. Pages `version.json` 1.2.0(`minNative` 1.1.0, 웹 묶음 3.1 MB SHA-256 일치, `asset-list.json` 104개에 `musx-write.js`·`musx-defaults.js`·`filename.js` 포함). 배포된 웹앱(PC·휴대폰)에서 내보내기 창의 파일 이름 칸 → `.musx`(실험적) 저장 → 다시 열기까지 확인, 콘솔 오류·실패한 요청 없음.
+
 ## 7. 남은 일(우선순위)
 
 1. 사진 인식(목표 90%; 6차 후 holdout6 사진 음높이 88.3%·박자 87.1%, 스캔 95.5 · 평평 93.5 · 휜 90.9 · 저해상도 68.2%, 더 어려운 holdout5 사진 77.6%). 학습은 6차로 멈춤 — 이어서 한다면 `tools/omr/IMPROVEMENTS.md` 'Where to continue'부터. 남은 순서: 저해상도 사진(잃은 음의 절반, 음높이 45%) → 휜/평평 사진의 마디 안 임시표(48%)·화음 → 조표(87%) → 음자리표 → Leland 글꼴(holdout5 41%) → 16/32분·셋잇단·마디선. 상세: `tools/omr/IMPROVEMENTS.md`.
