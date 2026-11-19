@@ -1,5 +1,5 @@
 {
   "_comment": "Release metadata merged into the published version.json (see RELEASING.md). androidMinNative: raise it to the current version whenever the Android NATIVE code (mobile/android) changed in a way the OTA web bundle cannot carry — devices below it are offered the APK instead. notes: shown in the in-app update prompt.",
   "androidMinNative": "1.1.0",
-  "notes": "글꼴: 제목·가사·코드 등 글자마다 글꼴 종류와 크기를 바꿀 수 있습니다(악보 → 글꼴…). 다른 악보 프로그램: MuseScore(.mscz)·NWC(.nwc) 파일을 열고 그 형식으로 저장, Sibelius·Finale용 MusicXML 내보내기. 설정: 검색되는 새 설정 창과 Windows·Android·웹 앱 전용 항목. 그 밖에 MusicXML 가져오기 정확도 개선, 못갖춘마디 재생·숨긴 쉼표 내보내기 수정. Android는 새 APK 설치가 필요합니다."
+  "notes": "내보내기: 파일 이름을 내보내기 창에서 바로 바꿀 수 있습니다(확장자 표시, 마지막 이름 기억, Android는 저장 위치 안내, '다른 이름으로 저장'에서 이름 묻기). Finale: .musx 파일로 저장할 수 있습니다(실험적 — Finale 26·27 형식). .musx 열기도 더 정확해졌습니다(쪽 나눔·타악기·셈여림 등)."
 }

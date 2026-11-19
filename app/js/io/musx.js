@@ -21,7 +21,7 @@
 import { parseXML, normalizeImported } from './musicxml.js';
 import {
   createPart, createMeasure, newId, STEPS, keyAlter, DUR_TICKS, durTicks, voiceTicks,
-  ticksToDurations, makeRest, validateScore, midiOf, INSTRUMENTS, DEFAULT_DRUM_MAP, staffPosition,
+  ticksToDurations, makeRest, validateScore, midiOf, INSTRUMENTS, DEFAULT_DRUM_MAP, staffPosition, noteAtStaffPosition,
 } from '../model/score.js';
 
 export const MUSX_EXTENSIONS = ['.musx', '.ftmx', '.ftm'];
@@ -195,7 +195,7 @@ const LEGACY_TO_SMUFL = { 33: 0xE220, 37: 0xE047, 38: 0xE050, 39: 0xE4A7, 42: 0x
   142: 0xE523, 150: 0xE526, 159: 0xE04A, 160: 0xE053, 161: 0xE650, 167: 0xE539, 171: 0xE4A8, 172: 0xE4AE, 174: 0xE4A6,
   175: 0xE529, 178: 0xE612, 179: 0xE610, 181: 0xE56E, 182: 0xE538, 184: 0xE52A, 185: 0xE52B, 189: 0xE521, 190: 0xE222,
   196: 0xE52F, 214: 0xE06A, 216: 0xE4A9, 217: 0xE566, 222: 0xE048, 223: 0xE4B1, 230: 0xE065, 232: 0xE4AF, 234: 0xE534,
-  235: 0xE531, 236: 0xE530, 246: 0xE5E5, 247: 0xE614, 248: 0xE4B2, 249: 0xE4B0,
+  235: 0xE531, 236: 0xE530, 246: 0xE5E5, 247: 0xE614, 248: 0xE4B2, 249: 0xE4B0, 103: 0xEAA9,
   // text-font metronome glyphs in Maestro: q h e w (note values), k = augmentation dot
   113: 0xE1D5, 104: 0xE1D3, 101: 0xE1D7, 119: 0xE1D2, 107: 0xE1E7 };
 const toSmufl = (cp) => (cp >= 0xE000 && cp <= 0xF8FF ? cp : LEGACY_TO_SMUFL[cp] || 0);
@@ -233,10 +233,9 @@ function dynamicFromRuns(runs) {
     }
   }
   if (!letters || other.replace(/[()]/g, '').length) return null;
-  const MAP = { pppppp: 'ppp', ppppp: 'ppp', pppp: 'ppp', ppp: 'ppp', pp: 'pp', p: 'p', mp: 'mp', mf: 'mf', f: 'f', ff: 'ff', fff: 'fff',
-    ffff: 'fff', fffff: 'fff', ffffff: 'fff', sfz: 'sfz', sffz: 'sfz', sf: 'sfz', sfzp: 'sfp', sfp: 'sfp', sfpp: 'sfp', fp: 'fp',
-    fz: 'fz', rfz: 'rfz', rf: 'rfz', pf: 'fp' };
-  return MAP[letters] || null;
+  // the dynamics JSE knows (as the MusicXML importer): kept as they are
+  const KNOWN = ['pppppp', 'ppppp', 'pppp', 'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'ffff', 'fffff', 'ffffff', 'sf', 'sfz', 'sffz', 'sfp', 'sfpp', 'sfzp', 'fp', 'pf', 'fz', 'rf', 'rfz'];
+  return KNOWN.includes(letters) ? letters : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +328,75 @@ function clefFromDef(def, index) {
   return 'treble';
 }
 
+// Finale's percussion note types (its PercNoteTypes.txt, as tabulated by musxdom): `type:gm` gives a type's General
+// MIDI key, `type>parent` a type that sounds like its parent type (e.g. "Snare Rim Shot" → "Snare Drum").
+const PERC_TYPES =
+  '1:38 2:36 3:37 4:49 5:57 6:56 7:54 8:80 9:81 10:76 11:77 12:58 13:35 14:46 15:42 16:44 17:52 18:51 19:59 20:53 21:55 22:39 23:40 24:50 25:48 26:47 ' +
+  '27:45 28:43 29:41 30:67 31:68 32:60 33:61 34:69 35:75 36:63 37:62 38:64 39:78 40:79 41:74 42:73 43:70 44:65 45:66 46:72 47:71 48>6 49>6 50>6 51>6 ' +
+  '52>48 53>49 54>50 55>6 56>48 57>49 58>50 59:82 62>59 63>59 65>63 66>7 67>7 68>10 69>11 70:84 71>41 72>43 73>251 74:83 75>30 76:28 77>13 78>3 79>3 ' +
+  '80>13 81>13 82>13 83>77 84>78 85>79 86>80 87>81 88>4 89>88 90>4 91>90 92>90 93>88 94>88 95>88 96>93 97>94 98>95 99>93 100>94 101>95 102>4 103>4 ' +
+  '104>103 105>4 106>105 107>105 108>106 109>18 110>4 111>18 112>14 113>14 114>15 115>14 116>15 117>15 118>90 119>105 120>106 121>18 122>18 123>88 124>88 ' +
+  '125>18 126>17 127>93 128>95 129>96 130>98 131>99 132>101 133>107 134>108 135>136 136>17 137>136 138>136 139>127 140>128 141>127 142>136 143>136 ' +
+  '144>136 145>136 146>136 147>136 148>136 149>136 150>18 151>18 152>149 153>103 154>103 155>104 156>129 157>131 158>130 159>132 160>149 161>149 162>149 ' +
+  '163>149 164>4 165>88 166>164 167>106 168>106 169>106 170>164 171>164 172>164 173>88 174>164 175>164 176>164 177>164 178>164 179>106 180>164 181>88 ' +
+  '182>164 183>164 184>164 185>165 186>166 187>167 188>168 189>169 190>170 191>171 192>172 193>173 194>15 195>174 196>175 197>176 198>177 199>121 200>178 ' +
+  '201>179 202>180 203>181 204>182 205>183 206>18 207>206 208>206 209>206 210>206 211>137 212>24 213>25 214>26 215>27 216>18 218>2 219>13 220>4 222>59 ' +
+  '223>27 224>46 225>47 226>46 227>88 229>96 230>3 231>88 234>22 236>1 237:93 238>1 239>277 240>1 241>1 242>1 243>1 244>1 245>1 246>3 247>259 248>1 249>3 ' +
+  '250>3 251>1 252>1 253>1 254:91 255>1 256:31 257>1 258>1 259>277 260>240 261>3 262>241 263>242 264>243 265>244 266>247 267>248 268>249 269>250 270>268 ' +
+  '271>252 272>253 273>254 274>255 275>256 276>14 277>1 278>277 279>1 280>236 281>1 282>1 283>24 284>289 285>24 286>24 287>24 288>24 289>24 290>284 ' +
+  '291>25 292>297 293>25 294>25 295>25 296>25 297>25 298>292 299>26 300>305 301>26 302>26 303>26 304>26 305>26 306>300 307>27 308>313 309>27 310>27 ' +
+  '311>27 312>27 313>27 314>308 317>275 318>26 319>27 320>24 321>25 322>26 323>25 324>25 325>330 326>25 327>25 328>25 329>25 330>289 331>325 332>30 ' +
+  '333>31 334>24 335>287 336>24 337>25 338>295 339>25 340>27 341>311 342>27 343>37 344>36 345>12 346>30 347>30 348>31 349>31 350>32 351>32 352>33 353>33 ' +
+  '355>34 356>34 357>34 358>34 359>2 360>359 361>359 362:85 363>362 364>362 365>362 366>6 367>48 368>36 369>36 370>36 371>370 372>370 373>370 374>36 ' +
+  '375>374 376>374 377>374 378>38 379>38 380>38 381>38 385>39 386>27 387>389 388>311 389>27 390>389 391>311 392>24 393>24 394>25 395>26 396>287 397>34 ' +
+  '398>41 399>41 400>41 401>41 402>36 403>38 404>43 405>43 406>392 407>394 408>396 409>43 410>34 411>34 412>34 413>34 414>34 415:87 416:86 417>36 418>37 ' +
+  '419>36 420>38 421>369 422>24 423>287 424>25 425>295 426>26 427>303 428>27 429>311 430>28 431>311 432>39 433>40 434>7 435>7 436>7 437>7 438>7 439>7 ' +
+  '440>36 441>38 442>44 443>44 444>44 445>30 446>30 447>37 448>36 449>38 450>37 451>46 452>7 454>22 455>59 456>30 457>31 458>277 459>11 460>7 461:32 ' +
+  '462:34 463:29 464:30 465>44 466>45 467>44 468>44 469>45 470>366 471>41 472>41 473>41 474>81 475>78 476>44 477>468 478>467 479>442 480>444 481>7 482>7 ' +
+  '483>7 484>7 489>66 490>44 491>468 492>467 493>442 494>44 495>468 496>44 497>468 498>389 499>390 500>359 501>359 502>359 503>32 504>30 505>31 506>333 ' +
+  '507>332 508>34 509>34 510>34 511>7 512>1 513>1 514>1 516>231 517>231 518>459 519>459 520>459 521>459 3968:0 3969:1 3970:2 3971:3 3972:4 3973:5 3974:6 ' +
+  '3975:7 3976:8 3977:9 3978:10 3979:11 3980:12 3981:13 3982:14 3983:15 3984:16 3985:17 3986:18 3987:19 3988:20 3989:21 3990:22 3991:23 3992:24 3993:25 ' +
+  '3994:26 3995:27 3996>76 3997>463 3998>464 3999>256 4000>461 4001:33 4002>462 4003>59 4004>74 4005>70 4006>362 4007>416 4008>415 4009:88 4010:89 ' +
+  '4011:90 4012>254 4013:92 4014>237 4015:94 4016:95 4017:96 4018:97 4019:98 4020:99 4021:100 4022:101 4023:102 4024:103 4025:104 4026:105 4027:106 ' +
+  '4028:107 4029:108 4030:109 4031:110 4032:111 4033:112 4034:113 4035:114 4036:115 4037:116 4038:117 4039:118 4040:119 4041:120 4042:121 4043:122 ' +
+  '4044:123 4045:124 4046:125 4047:126 4048:127 ';
+let percTables = null;
+function percTables_() {
+  if (percTables) return percTables;
+  const own = new Map(), parent = new Map();
+  for (const w of PERC_TYPES.trim().split(/\s+/)) {
+    const m = /^(\d+)([:>])(\d+)$/.exec(w); if (!m) continue;
+    (m[2] === ':' ? own : parent).set(+m[1], +m[3]);
+  }
+  const byGm = new Map();
+  for (const [t, gm] of own) if (t < 3968 && !byGm.has(gm)) byGm.set(gm, t);   // 3968… are Finale's "Custom n" types
+  return (percTables = { own, parent, byGm });
+}
+/** General MIDI key of a Finale percussion note type (the order bits above 0xfff are ignored); -1 when it has none. */
+export function percTypeGm(type) {
+  const { own, parent } = percTables_();
+  let t = type & 0xfff;
+  for (let i = 0; i < 8; i++) { if (own.has(t)) return own.get(t); if (!parent.has(t)) break; t = parent.get(t); }
+  return -1;
+}
+/** Finale's percussion note type for a General MIDI key (0 when there is none). */
+export function percTypeForGm(gm) { return percTables_().byGm.get(gm) || 0; }
+// noteheads of percussion layouts (closed notehead: Maestro Percussion or SMuFL) → JSE notehead
+const PERC_HEAD_OF = { 207: 'normal', 120: 'x', 121: 'x', 88: 'circle-x', 89: 'circle-x', 49: 'triangle-black', 33: 'triangle', 51: 'diamond-black', 35: 'diamond',
+  41: 'square', 48: 'square', 54: 'square', 43: 'plus', 47: 'slash', 63: 'slash',
+  0xE0A4: 'normal', 0xE0A9: 'x', 0xE0B3: 'circle-x', 0xE0BE: 'triangle-black', 0xE0BD: 'triangle', 0xE0DB: 'diamond-black', 0xE0DD: 'diamond',
+  0xE0B8: 'square', 0xE0B9: 'square', 0xE0AF: 'plus', 0xE100: 'slash', 0xE101: 'slash' };
+// notehead characters of a note (Maestro, or SMuFL in SMuFL fonts) → JSE notehead
+const NOTEHEAD_OF = { 192: 'x', 0xE0A9: 'x', 0xE0A8: 'x', 0xE0B3: 'circle-x', 225: 'diamond', 0xE0DD: 'diamond', 226: 'diamond-black', 0xE0DB: 'diamond-black',
+  121: 'triangle', 0xE0BD: 'triangle', 209: 'triangle-black', 0xE0BE: 'triangle-black', 173: 'square', 194: 'square', 208: 'square', 0xE0B8: 'square', 0xE0B9: 'square',
+  243: 'slash', 203: 'slash', 218: 'slash', 0xE100: 'slash', 0xE101: 'slash', 0xE102: 'slash', 132: 'plus', 0xE0AF: 'plus' };
+// General MIDI percussion, keys 35…81
+const GM_DRUM_NAMES = ('어쿠스틱 베이스 드럼,베이스 드럼,사이드 스틱,스네어,핸드 클랩,일렉트릭 스네어,로우 플로어 탐,클로즈드 하이햇,하이 플로어 탐,' +
+  '페달 하이햇,로우 탐,오픈 하이햇,로우미드 탐,하이미드 탐,크래시 심벌,하이 탐,라이드 심벌,차이나 심벌,라이드 벨,탬버린,스플래시 심벌,카우벨,' +
+  '크래시 심벌 2,비브라슬랩,라이드 심벌 2,하이 봉고,로우 봉고,뮤트 하이 콩가,오픈 하이 콩가,로우 콩가,하이 팀발레스,로우 팀발레스,하이 아고고,' +
+  '로우 아고고,카바사,마라카스,짧은 휘슬,긴 휘슬,짧은 귀로,긴 귀로,클라베스,하이 우드블록,로우 우드블록,뮤트 쿠이카,오픈 쿠이카,뮤트 트라이앵글,' +
+  '오픈 트라이앵글').split(',');
+
 // articulation glyphs (SMuFL) → model fields
 const ARTIC_BY_SMUFL = {
   0xE4A0: ['art', 'accent'], 0xE4A1: ['art', 'accent'], 0xE4A2: ['art', 'staccato'], 0xE4A3: ['art', 'staccato'],
@@ -342,7 +410,7 @@ const ARTIC_BY_SMUFL = {
   0xE4C8: ['fermata', 'above'], 0xE4C9: ['fermata', 'below'],
   0xE566: ['orn', 'trill'], 0xE567: ['orn', 'turn'], 0xE568: ['orn', 'inverted-turn'], 0xE569: ['orn', 'inverted-turn'],
   0xE56C: ['orn', 'inverted-mordent'], 0xE56D: ['orn', 'mordent'], 0xE56E: ['orn', 'inverted-mordent'],
-  0xE220: ['trem', 1], 0xE221: ['trem', 2], 0xE222: ['trem', 3],
+  0xE220: ['trem', 1], 0xE221: ['trem', 2], 0xE222: ['trem', 3], 0xEAA9: ['arpeggio'],
 };
 
 // ---------------------------------------------------------------------------
@@ -370,6 +438,7 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
 
   // ---- staves & parts -------------------------------------------------------
   const staffSpecs = doc.index('staffSpec');
+  const fretInsts = doc.index('fretInst');
   let order = (doc.group('instUsed').get('0') || []).map(el => int(el, 'inst'));
   if (!order.length) {
     const systems = [...doc.group('instUsed').entries()].filter(([k]) => +k > 0 && +k < 65000).sort((a, b) => +a[0] - +b[0]);
@@ -439,7 +508,16 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     part.staves = staves.map(s => {
       const st = { id: newId(), type: s.type, lines: s.type === 'tab' ? Math.max(4, s.lines) : s.type === 'percussion' ? (s.lines === 1 ? 1 : 5) : 5, clef: s.type === 'percussion' ? 'percussion' : s.type === 'tab' ? 'tab' : s.clef };
       if (s.type === 'percussion') { st.drumMap = JSON.parse(JSON.stringify(DEFAULT_DRUM_MAP)); if (st.lines === 1) st.drumMap = { hit: { line: 4, head: 'normal', midi: 38, name: '타격' } }; }
-      if (s.type === 'tab') st.tuning = st.lines === 4 ? ['E1', 'A1', 'D2', 'G2'] : ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'];
+      if (s.type === 'tab') {
+        st.tuning = st.lines === 4 ? ['E1', 'A1', 'D2', 'G2'] : ['E2', 'A2', 'D3', 'G3', 'B3', 'E4'];
+        const fi = kid(s.spec, 'fretInstID') ? fretInsts.get(txt(s.spec, 'fretInstID')) : null;
+        const pitches = fi ? kids(fi, 'string').map(x => int(x, 'pitch', 0)).filter(x => x > 0) : [];
+        if (pitches.length >= 3 && pitches.length <= 12) {
+          const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+          st.tuning = pitches.slice().reverse().map(m => NAMES[m % 12] + (Math.floor(m / 12) - 1));
+          st.lines = pitches.length;
+        }
+      }
       return st;
     });
     // transposition (Finale stores concert pitch; JSE stores written pitch)
@@ -452,6 +530,7 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
         while (semis - target > 6) semis -= 12; while (target - semis > 6) semis += 12;
         part.transposeChromatic = -semis;
         part._writtenShift = { diatonic: interval, semitones: semis };
+        part._keyAdjust = adjust;
       }
     } else if (tr && kid(tr, 'chromatic')) {
       const ch = kid(tr, 'chromatic'); const diatonic = int(ch, 'diatonic', 0), alteration = int(ch, 'alteration', 0);
@@ -461,6 +540,11 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     parts.push(part);
   }
   const nStaves = gIndex;
+  const stdParts = [...staffInfo.values()].filter(s => s.staff.type === 'standard').map(s => s.part);
+  const refPart = stdParts.find(p => !p._keyAdjust) || stdParts[0];
+  const refAdjust = refPart ? refPart._keyAdjust || 0 : 0;
+  for (const p of parts) delete p._keyAdjust;
+  const shownKey = (k) => { if (!refAdjust || k.keyless) return k; let f = k.fifths + refAdjust; while (f > 7) f -= 12; while (f < -7) f += 12; return { ...k, fifths: f }; };
 
   // ---- measures ---------------------------------------------------------------
   const measSpecs = doc.index('measSpec');
@@ -484,20 +568,20 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
   };
   applyPageSetup(doc, score);
 
-  const keys = []; const caps = []; const tsList = [];
+  const keys = []; const caps = [];
   let prevKey = null, prevTs = null;
   for (let m = 1; m <= measCount; m++) {
     const ms = measSpecs.get(String(m));
     const measure = createMeasure({ parts });
     measure.staves = Array.from({ length: nStaves }, () => ({ voices: [[]] }));
-    const key = ms && kid(ms, 'keySig') ? decodeKey(kid(ms, 'keySig')) : (prevKey || { fifths: 0, mode: 'major' });
+    const key = ms ? (kid(ms, 'keySig') ? decodeKey(kid(ms, 'keySig')) : { fifths: 0, mode: 'major' }) : (prevKey || { fifths: 0, mode: 'major' });
     const beats = ms ? int(ms, 'beats', 4) : (prevTs ? prevTs.beats : 4);
     const divbeat = ms ? int(ms, 'divbeat', 1024) : (prevTs ? prevTs.divbeat : 1024);
-    const actual = timeSigFrom(beats, divbeat, ms && has(ms, 'compositeNumerator') ? compositeOf(beats) : null);
+    const actual = timeSigFrom(beats, divbeat, ms && (has(ms, 'altNumTsig') || has(ms, 'compositeNumerator')) ? compositeOf(beats) : null);
     let shown = actual;
     if (ms && has(ms, 'useDisplayTimesig')) {
       const db = int(ms, 'dispBeats', beats), dd = int(ms, 'dispDivbeat', divbeat);
-      shown = timeSigFrom(db, dd, has(ms, 'displayCompositeNumerator') ? compositeOf(db) : null);
+      shown = timeSigFrom(db, dd, has(ms, 'displayAltNumTsig') || has(ms, 'displayCompositeNumerator') ? compositeOf(db) : null);
       if (actual.capacityEdu > shown.capacityEdu) shown = actual;   // unmetered / long measures: keep the real length
     }
     let display = 'normal';
@@ -505,30 +589,26 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     const tsKey = `${shown.num}/${shown.den}/${display}`;
     if (!prevTs || prevTs.key !== tsKey) measure.timeSig = { num: shown.num, den: shown.den, display };
     if (actual.capacityEdu < shown.capacityEdu) measure.pickup = true;
-    if (!prevKey || prevKey.fifths !== key.fifths || prevKey.mode !== key.mode) measure.keySig = { fifths: key.fifths, mode: key.mode };
+    if (!prevKey || prevKey.fifths !== key.fifths || prevKey.mode !== key.mode) measure.keySig = { fifths: shownKey(key).fifths, mode: key.mode };
     if (ms) {
       const bl = txt(ms, 'barline');
-      const BL = { double: 'double', final: 'final', dashed: 'dashed', none: 'none', thick: 'final', tick: 'single', normal: null, custom: null };
+      const BL = { double: 'double', final: 'final', dash: 'dashed', dashed: 'dashed', none: 'none', thick: 'final', tick: 'single', normal: null, custom: null };
       if (bl && BL[bl]) measure.barlineRight = BL[bl];
+      // no <barline> at all is Finale's "none": no barline (worksheets); Finale writes "normal" for a normal one
+      else if (bl == null && isScoreLevel(ms)) measure.barlineRight = 'none';
       if (has(ms, 'forRepBar')) measure.barlineLeft = 'repeat-start';
       if (has(ms, 'bacRepBar')) measure.barlineRight = 'repeat-end';
     }
-    keys.push(key); caps.push(actual.capacityEdu); tsList.push(shown);
+    keys.push(key); caps.push(actual.capacityEdu);
     prevKey = key; prevTs = { beats, divbeat, key: tsKey };
+    // "begin a new page" on this measure: a page break after the one before
+    if (ms && has(ms, 'pageBreak') && score.measures.length) { const pm = score.measures[score.measures.length - 1]; pm.breaks = { ...(pm.breaks || {}), page: true }; }
     score.measures.push(measure);
   }
   if (!score.measures[0].timeSig) score.measures[0].timeSig = { num: 4, den: 4, display: 'normal' };
   if (!score.measures[0].keySig) score.measures[0].keySig = { fifths: 0, mode: 'major' };
-  // a pickup only makes sense on the first measure; elsewhere keep the actual meter
-  score.measures.forEach((m, mi) => {
-    if (mi > 0 && m.pickup) {
-      delete m.pickup;
-      const a = timeSigFrom(1, caps[mi], null);
-      m.timeSig = { num: a.num, den: a.den, display: 'normal' };
-      const next = score.measures[mi + 1];
-      if (next && !next.timeSig) { const s = tsList[mi + 1]; next.timeSig = { num: s.num, den: s.den, display: 'normal' }; }
-    }
-  });
+  // a measure shorter than the time signature it shows (an upbeat, or an irregular bar later on, e.g. before a
+  // repeat) is a pickup measure in JSE too: it keeps the time signature and shows no change of meter
   const last = score.measures[score.measures.length - 1];
   if (!last.barlineRight) last.barlineRight = 'final';
 
@@ -557,7 +637,13 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     score.spanners.push({ id: newId(), type: 'volta', from: { measureId: score.measures[startMi].id }, to: { measureId: score.measures[endMi].id }, number: label, voltaType: closed ? 'closed' : 'open' });
   }
   const repeatTexts = new Map();
-  for (const t of doc.other('textRepeatText')) repeatTexts.set(t.attrs.cmper, plainText(txt(t, 'rptText') || ''));
+  const repeatDefs = doc.index('textRepeatDef');
+  for (const t of doc.other('textRepeatText')) {
+    const def = repeatDefs.get(t.attrs.cmper);
+    const raw = txt(t, 'rptText') || '';
+    // a text repeat drawn in the music font (Finale's own Segno "%" and Coda "Þ") is a symbol, not letters
+    repeatTexts.set(t.attrs.cmper, def && ctx.isMusicFontId(int(def, 'fontID', 0)) && !/\^/.test(raw) ? runsToPlain([{ text: raw, music: true }]) : plainText(raw));
+  }
   for (const ta of doc.other('textRepeatAssign')) {
     const m = score.measures[+ta.attrs.cmper - 1]; if (!m) continue;
     const text = repeatTexts.get(String(int(ta, 'repnum'))) || '';
@@ -573,6 +659,16 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
   const frames = doc.group('frameSpec');
   const tupletDefs = doc.group('tupletDef', 'entnum', true);
   const articAssigns = doc.group('articAssign', 'entnum', true);
+  const tabAlters = doc.group('tabAlter', 'entnum', true);
+  // entries a smart shape is attached to (kept even when they are hidden rests of an otherwise empty voice)
+  const anchoredEntries = new Set();
+  for (const ss of doc.other('smartShape')) for (const seg of ['startTermSeg', 'endTermSeg']) { const ep = kid(kid(ss, seg), 'endPt'); const en = ep ? int(ep, 'entryNum', 0) : 0; if (en) anchoredEntries.add(en); }
+  const anchoredEvents = { has: (ev) => { for (const en of anchoredEntries) if (entryToEvent.get(en)?.ev === ev) return true; return false; } };
+  // percussion: the staff's percussion layout ("drum library") gives each note's instrument (note type) and its line
+  const percCodes = doc.group('percussionNoteCode', 'entnum', true);
+  const noteAlters = doc.group('noteAlter', 'entnum', true);   // per-note notehead characters
+  const drumLibOf = new Map(doc.other('drumStaff').filter(isScoreLevel).map(d => [d.attrs.cmper, int(d, 'whichDrumLib', 0)]));
+  const percLayouts = doc.group('percussionNoteInfo');
   const articDefs = doc.index('articDef');
   const lyricData = { verse: doc.group('lyrDataVerse', 'entnum', true), chorus: doc.group('lyrDataChorus', 'entnum', true), section: doc.group('lyrDataSection', 'entnum', true) };
   const lyricTexts = { verse: new Map(), chorus: new Map(), section: new Map() };
@@ -638,15 +734,15 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
           return d;
         };
         for (const en of chain) {
-          if (has(en, 'voice2')) { v2.push({ en, start: tV2 }); tV2 += actual(en, tupV2); }
-          else { if (has(en, 'v2Launch')) { launchAt = tMain; tV2 = launchAt; } main.push({ en, start: tMain }); tMain += actual(en, tupMain); }
+          if (has(en, 'v2') || has(en, 'voice2')) { v2.push({ en, start: tV2 }); tV2 += actual(en, tupV2); }
+          else { if (has(en, 'controller') || has(en, 'v2Launch')) { launchAt = tMain; tV2 = launchAt; } main.push({ en, start: tMain }); tMain += actual(en, tupMain); }
         }
         layerVoices.push({ layer, items: main });
         if (v2.length) layerVoices.push({ layer, items: v2, v2: true });
       }
       layerVoices.forEach((lv, vi) => {
         if (vi > 3) { warn('한 오선에 4개를 넘는 성부는 생략했습니다'); return; }
-        const voice = buildVoice(lv, { doc, key, sInfo, part: sInfo.part, tupletDefs, articAssigns, articDefs, lyricData, lyricTexts, verseNumber, warn, mi, entryToEvent, gIndex: sInfo.gIndex, voiceIndex: vi, hasLyricsOnStaff });
+        const voice = buildVoice(lv, { doc, key, sInfo, part: sInfo.part, tupletDefs, articAssigns, articDefs, lyricData, lyricTexts, verseNumber, warn, mi, entryToEvent, gIndex: sInfo.gIndex, voiceIndex: vi, hasLyricsOnStaff, tabAlters: sInfo.staff.type === 'tab' ? tabAlters : null, percCodes: sInfo.staff.type === 'percussion' ? percCodes : null, noteAlters: sInfo.staff.type === 'tab' ? null : noteAlters });
         sm.voices[vi] = voice;
       });
       // fill gaps so every voice reaches the measure length
@@ -660,7 +756,8 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
         if (v.length === 1 && v[0].kind === 'rest' && Math.abs(durTicks(v[0]) - capTicks) <= 1 && !v[0].tuplet) { v[0].fullMeasureRest = true; v[0].dur = { base: 'whole', dots: 0 }; }
         else if (v.length === 1 && v[0].kind === 'rest' && durTicks(v[0]) > capTicks) { v[0].fullMeasureRest = true; v[0].dur = { base: 'whole', dots: 0 }; }
       });
-      for (let k = sm.voices.length - 1; k > 0; k--) if (!sm.voices[k] || !sm.voices[k].length || sm.voices[k].every(e => e.kind === 'rest' && e.hidden)) sm.voices.splice(k, 1);
+      // a lower voice of hidden rests only goes — unless a line is attached to one of them
+      for (let k = sm.voices.length - 1; k > 0; k--) if (!sm.voices[k] || !sm.voices[k].length || (sm.voices[k].every(e => e.kind === 'rest' && e.hidden) && !sm.voices[k].some(e => anchoredEvents.has(e)))) sm.voices.splice(k, 1);
       if (!sm.voices.length) sm.voices = [[]];
     }
   }
@@ -668,20 +765,51 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
   // percussion: map positions to drum keys; tab: assign string/fret
   for (const [, sInfo] of staffInfo) {
     if (sInfo.staff.type === 'percussion') {
+      // The staff's percussion layout ("drum library") says what each note is: its note type gives the instrument and
+      // sound (General MIDI key), its line (Finale counts from middle C's position on a treble staff, JSE from the top
+      // line) and noteheads. The layout becomes the staff's drum map; a drum of JSE's default kit keeps its key.
+      const libId = drumLibOf.get(String(sInfo.id));
+      const layout = new Map();
+      if (libId != null) for (const pi of percLayouts.get(String(libId)) || []) {
+        if (!isScoreLevel(pi)) continue;
+        const type = int(pi, 'percNoteType', 0);
+        if (type && !layout.has(type)) layout.set(type, { line: 10 - int(pi, 'harmLev', 0), head: PERC_HEAD_OF[int(pi, 'closedNotehead', 0)] || 'normal', gm: percTypeGm(type) });
+      }
+      const keyOf = new Map();
+      if (layout.size) {
+        const dm = {}, names = new Map();
+        for (const [type, L] of layout) {
+          const def = L.gm >= 0 && percTypeForGm(L.gm) === type ? Object.entries(sInfo.staff.drumMap).find(([k, d]) => d.midi === L.gm && !dm[k]) : null;
+          const key = def ? def[0] : `finale-${type}`;
+          let name = def ? def[1].name : (GM_DRUM_NAMES[L.gm - 35] || `타악기 ${type & 0xfff}`);
+          const seen = names.get(name) || 0; names.set(name, seen + 1); if (seen) name += ` ${seen + 1}`;
+          dm[key] = { line: sInfo.staff.lines === 1 ? 4 : L.line, head: L.head, midi: L.gm >= 0 ? L.gm : 38, name };
+          keyOf.set(type, key);
+        }
+        sInfo.staff.drumMap = dm;
+      }
       for (const m of score.measures) for (const v of m.staves[sInfo.gIndex].voices) for (const ev of v) for (const n of (ev.notes || [])) {
+        const code = n._percCode; delete n._percCode;
+        n.alter = 0;
+        if (code != null && keyOf.has(code)) { n.drum = keyOf.get(code); Object.assign(n, noteAtStaffPosition(sInfo.staff.drumMap[n.drum].line, 'treble')); continue; }
+        // with a layout, a note without a note type is none of its instruments (Finale draws it at its pitch): no drum
+        if (layout.size) continue;
+        // no layout: the drum of JSE's kit on the note's line
         const line = staffPosition(n, 'treble');
         const entries = Object.entries(sInfo.staff.drumMap);
         const hit = entries.find(([, d]) => d.line === line && d.head === 'normal') || entries.find(([, d]) => d.line === line) || entries.sort((a, b) => Math.abs(a[1].line - line) - Math.abs(b[1].line - line))[0];
         if (hit) n.drum = hit[0];
-        n.alter = 0;
       }
     } else if (sInfo.staff.type === 'tab') {
-      const tuning = sInfo.staff.tuning.map(t => midiOf({ step: t[0], octave: +t.slice(-1), alter: 0 }));
+      const tuning = sInfo.staff.tuning.map(t => { const m = /^([A-G])(#|b)?(-?\d+)$/.exec(t) || ['', 'E', '', '2']; return midiOf({ step: m[1], octave: +m[3], alter: m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0 }); });
       for (const m of score.measures) for (const v of m.staves[sInfo.gIndex].voices) for (const ev of v) {
         const usedStrings = new Set();
         for (const n of [...(ev.notes || [])].sort((a, b) => midiOf(b) - midiOf(a))) {
           const midi = midiOf(n); let best = null;
-          for (let s = tuning.length - 1; s >= 0; s--) { const fret = midi - tuning[s]; const stringNo = tuning.length - s; if (fret >= 0 && fret <= 24 && !usedStrings.has(stringNo)) { best = { string: stringNo, fret }; break; } }
+          // the string Finale's TAB data names (tabAlter), when it fits
+          if (n._tabString >= 1 && n._tabString <= tuning.length) { const fret = midi - tuning[tuning.length - n._tabString]; if (fret >= 0 && fret <= 24 && !usedStrings.has(n._tabString)) best = { string: n._tabString, fret }; }
+          delete n._tabString;
+          if (!best) for (let s = tuning.length - 1; s >= 0; s--) { const fret = midi - tuning[s]; const stringNo = tuning.length - s; if (fret >= 0 && fret <= 24 && !usedStrings.has(stringNo)) { best = { string: stringNo, fret }; break; } }
           if (best) { n.string = best.string; n.fret = best.fret; usedStrings.add(best.string); }
         }
       }
@@ -719,11 +847,13 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     }
     return out.replace(/Δ/g, 'maj').replace(/ø/g, 'm7b5').replace(/°/g, 'dim').trim();
   };
+  const chordStaff = new Map();
   for (const ca of doc.detail('chordAssign')) {
     const fid = +ca.attrs.cmper1, mi = +ca.attrs.cmper2 - 1;
     const m = score.measures[mi]; if (!m || !staffInfo.has(fid)) continue;
     if (!has(ca, 'showRoot') && !has(ca, 'showSuffix')) continue;
-    const key = keys[mi];
+    // a chord is a scale degree of the key: named in the key the score shows (the written key of a transposing-only score)
+    const key = shownKey(keys[mi]);
     const root = chordRootName(int(ca, 'rootScaleNum', 0), int(ca, 'rootAlter', 0), key, has(ca, 'rootLowerCase'));
     const kind = has(ca, 'showSuffix') && kid(ca, 'suffix') ? suffixText(int(ca, 'suffix')) : '';
     const bass = has(ca, 'showAltBass') ? chordRootName(int(ca, 'bassScaleNum', 0), int(ca, 'bassAlter', 0), key, has(ca, 'bassLowerCase')) : '';
@@ -732,7 +862,8 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     if (kind) chord.kind = kind;
     if (bass) chord.bass = bass;
     const arr = m.chords || (m.chords = []);
-    if (!arr.some(c => c.tick === tick)) arr.push(chord);
+    // the same chord on several staves is one chord symbol; on one staff, chords at one position all stay
+    if (!arr.some(c => c.tick === tick && (c.text === chord.text || chordStaff.get(c) !== fid))) { arr.push(chord); chordStaff.set(chord, fid); }
   }
   for (const m of score.measures) if (m.chords) m.chords.sort((a, b) => a.tick - b.tick);
 
@@ -797,8 +928,11 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
       const arr = m.texts || (m.texts = []);
       const mk = markerFromText(plain);
       if (mk) (m.markers || (m.markers = [])).includes(mk) || m.markers.push(mk);
-      // measure texts are not per staff here, so one expression assigned to many staves must appear once
-      else if (!arr.some(t => t.text === plain) && (m.tempo?.text || '') !== plain) arr.push({ text: plain, placement, style: style === 'plain' ? 'plain' : style });
+      // one expression assigned to many staves appears once; one assigned to a lower staff only stays with that staff
+      else {
+        const si = staffSpecific ? staffG : 0;
+        if (!arr.some(t => t.text === plain && (!si || (t.staffIndex || 0) === si)) && (m.tempo?.text || '') !== plain) arr.push({ text: plain, placement, style: style === 'plain' ? 'plain' : style, ...(si ? { staffIndex: si } : {}) });
+      }
     }
   }
 
@@ -813,6 +947,15 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     const tick = toTicks(int(ep, 'edu', 0));
     const ev = eventAt(score, mi, gi, tick, 0, true);
     return ev ? { ev, gIndex: gi, mi } : null;
+  };
+  const lineStyles = doc.index('ssLineStyle');
+  const lineStyleText = (id) => {
+    const ls = lineStyles.get(String(id)); if (!ls) return { text: '', pedal: false };
+    const raw = kid(ls, 'leftStartRawTextID') ? doc.text('smartShapeText', int(ls, 'leftStartRawTextID')) : null;
+    if (raw == null) return { text: '', pedal: false };
+    const runs = enigmaRuns(raw, ctx);
+    const pedal = runs.some(r => r.music && [...r.text].some(ch => toSmufl(ch.codePointAt(0)) === 0xE650)) || /^\s*ped\.?\s*$/i.test(runsToPlain(runs));
+    return { text: pedal ? '' : runsToPlain(runs), pedal };
   };
   for (const ss of doc.other('smartShape')) {
     if (has(ss, 'hidden')) continue;
@@ -829,7 +972,8 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     else if (type === 'trill' || type === 'trillExt') sp.type = 'trill';
     else if (type === 'glissando' || type === 'tabSlide') sp.type = 'glissando';
     else if (/pedal/i.test(type)) sp.type = 'pedal';
-    else if (/line|bracket/i.test(type)) { sp.type = 'textLine'; sp.text = ''; }
+    else if (type === 'smartLine' && lineStyleText(int(ss, 'lineStyleID', 0)).pedal) sp.type = 'pedal';
+    else if (/line|bracket/i.test(type)) { sp.type = 'textLine'; sp.text = type === 'smartLine' ? lineStyleText(int(ss, 'lineStyleID', 0)).text : ''; }
     else continue;
     score.spanners.push(sp);
   }
@@ -843,7 +987,14 @@ export function enigmaToScore(xmlText, { meta = null } = {}) {
     if (part.instrument === 'melody' && [...staffInfo.values()].some(s => s.part === part && hasLyricsOnStaff.has(s.gIndex))) { part.instrument = 'voice'; part.midiProgram = INSTRUMENTS.voice.program; if (!part.name || part.name === INSTRUMENTS.melody.name) part.name = INSTRUMENTS.voice.name; }
   }
   score.measures.forEach(m => { for (const sm of m.staves) for (const v of sm.voices) for (const ev of v) if (ev.notes && ev.notes.length > 1) ev.notes.sort((x, y) => midiOf(x) - midiOf(y)); });
+  // normalizeImported() empties voices that hold nothing but a whole-measure rest: keep the rests a line starts or ends on
+  // (as the MuseScore importer does), else the line would point at a rest that is gone
+  const anchors = new Set();
+  for (const sp of score.spanners) if (sp.type !== 'volta') { anchors.add(sp.from?.eventId); anchors.add(sp.to?.eventId); }
+  const keep = [];
+  for (const m of score.measures) for (const sm of m.staves) { const v = sm.voices[0]; if (v && v.length === 1 && v[0].fullMeasureRest && anchors.has(v[0].id)) keep.push([sm, v[0]]); }
   normalizeImported(score);
+  for (const [sm, ev] of keep) if (!sm.voices[0].length) sm.voices[0] = [ev];
   validateScore(score, { repair: true });
   score.importInfo = { from: 'finale', warnings: [...warnings] };
   return score;
@@ -922,7 +1073,8 @@ function splitLyrics(text) {
   for (const ch of (text || '').replace(/\r/g, '\n')) {
     if (ch === ' ' || ch === '\n' || ch === '\t') flush(false);
     else if (ch === '-') flush(true);
-    else buf += ch === '_' ? ' ' : ch;
+    // inside a syllable: '_' and a no-break space are spaces, a no-break hyphen is a hyphen, a fullwidth low line '_'
+    else buf += ch === '_' || ch === '\u00a0' ? ' ' : ch === '\u2011' ? '-' : ch === '\uff3f' ? '_' : ch;
   }
   flush(false);
   return out;
@@ -951,7 +1103,7 @@ function tempoFromRuns(runs, value, beatEdu) {
     for (const ch of r.text) {
       const s = toSmufl(ch.codePointAt(0));
       if (METRONOME[s] && !unit) unit = METRONOME[s];
-      else if (s === 0xE1E7 && unit) dots++;
+      else if ((s === 0xE1E7 || (ch === 'd' && !s)) && unit) dots++;
       else if (/[0-9=]/.test(ch)) words += ch;
     }
   }
@@ -1000,6 +1152,13 @@ function buildVoice(lv, c) {
       ? { id: newId(), kind: 'note', dur, notes: notes.map(n => {
         const p = pitchFromHarm(int(n, 'harmLev', 0), int(n, 'harmAlt', 0), key);
         const note = { step: p.step, octave: p.octave, alter: p.alter };
+        const ta = (c.tabAlters?.get(en.attrs.entnum) || []).find(t => int(t, 'noteID', 0) === +(n.attrs.id || 0));
+        if (ta) note._tabString = int(ta, 'stringNumber', 0);
+        const pc = (c.percCodes?.get(en.attrs.entnum) || []).find(t => int(t, 'noteID', 0) === +(n.attrs.id || 0));
+        if (pc) note._percCode = int(pc, 'noteCode', 0);
+        const na = (c.noteAlters?.get(en.attrs.entnum) || []).find(t => isScoreLevel(t) && int(t, 'noteID', 0) === +(n.attrs.id || 0));
+        const head = na && NOTEHEAD_OF[int(na, 'altNhead', 0)];
+        if (head) note.head = head;
         if (has(n, 'tieStart')) note.tieStart = true;
         if (has(n, 'tieEnd')) note.tieEnd = true;
         if (has(n, 'showAcci') && has(n, 'freezeAcci')) note.accidental = { '-2': 'double-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' }[p.alter] || undefined;
@@ -1019,6 +1178,7 @@ function buildVoice(lv, c) {
       if (nominal > 0 && actual > 0 && nominal !== actual) {
         const g = gcd(nominal, actual);
         tuplet = { id: newId(), num: nominal / g, den: actual / g, remainingEdu: nominal };
+        if (sDur === rDur && sNum > 0 && rNum > 0 && sNum <= 32 && rNum <= 32) { tuplet.num = sNum; tuplet.den = rNum; }
         if (tuplet.num > 32 || tuplet.den > 32) { const g2 = gcd(sNum, rNum); tuplet.num = sNum / g2; tuplet.den = rNum / g2; }
       }
       if (tds.length > 1) warn('중첩 잇단음표는 바깥쪽만 가져왔습니다');
@@ -1036,8 +1196,10 @@ function buildVoice(lv, c) {
       if (hit[0] === 'art') add(ev, 'articulations', hit[1]);
       else if (hit[0] === 'art2') { add(ev, 'articulations', hit[1]); add(ev, 'articulations', hit[2]); }
       else if (hit[0] === 'orn') add(ev, 'ornaments', hit[1]);
-      else if (hit[0] === 'fermata') ev.fermata = hit[1];
+      // (a fermata placed by hand: above or below the entry, whatever the glyph)
+      else if (hit[0] === 'fermata') ev.fermata = has(aa, 'overridePlacement') ? (has(aa, 'aboveEntry') ? 'above' : 'below') : hit[1];
       else if (hit[0] === 'trem') ev.tremolo = hit[1];
+      else if (hit[0] === 'arpeggio') ev.arpeggio = true;
     }
     // lyrics
     for (const kind of ['verse', 'chorus', 'section']) {
@@ -1058,17 +1220,20 @@ function buildVoice(lv, c) {
     voice.push(ev);
     entryToEvent.set(+en.attrs.entnum, { ev, gIndex, mi, voiceIndex });
   }
-  // Finale beaming: an entry continues the previous beam unless it has the "beam" (break) flag.
-  const beamable = (ev) => ev.kind === 'note' && !ev.grace && DUR_TICKS[ev.dur.base] <= DUR_TICKS.eighth;
+  // Finale beaming: an entry continues the previous beam unless it has the "beam" (break) flag. A short rest without
+  // the flag sits inside the beam when there are notes of the group on both sides of it (as musxdom reads it).
+  const short = (ev) => !ev.grace && DUR_TICKS[ev.dur.base] <= DUR_TICKS.eighth;
   let group = [];
   const flushBeam = () => {
+    while (group.length && group[0].kind === 'rest') group.shift();
+    while (group.length && group[group.length - 1].kind === 'rest') group.pop();
     if (group.length > 1) group.forEach((ev, k) => { ev.beam = k === 0 ? 'begin' : k === group.length - 1 ? 'end' : 'continue'; });
     else if (group.length === 1) group[0].beam = 'none';
     group = [];
   };
   voice.forEach((ev, i) => {
     if (ev.grace) return;
-    if (!beamable(ev)) { flushBeam(); return; }
+    if (!short(ev) || (ev.kind !== 'note' && ev.kind !== 'rest')) { flushBeam(); return; }
     if (beamState[i] || !group.length) flushBeam();
     group.push(ev);
   });

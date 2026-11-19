@@ -1,9 +1,11 @@
 // Export dialog: PDF / PNG / JPG / SVG · other notation programs (MuseScore, NWC, Sibelius, Finale, MusicXML) · MIDI / .ssnap
 import { showDialog } from './dialogs.js';
 import { icon } from './icons.js';
-import { exportImages, exportPdf, exportSvg, exportMidiBlob, zipBlobs, safeFileName } from '../io/export.js';
+import { exportImages, exportPdf, exportSvg, exportMidiBlob, zipBlobs } from '../io/export.js';
+import { safeFileName, defaultFileBase, fileBaseFromInput, cleanFileBase, hasBadFileChars, exportNameSuffix, savedFileLabel, BAD_CHARS_TEXT } from '../io/filename.js';
 import { writeSsnap } from '../io/ssnap.js';
-import { saveBlob, shareBlob, isMobileLayout } from '../native.js';
+import { escapeXml } from '../engrave/text.js';
+import { saveBlob, shareBlob, isMobileLayout, saveDestination, saveDestinationText } from '../native.js';
 
 const XML_VARIANTS = [
   { id: 'musicxml', label: '.musicxml', ext: '.musicxml', mime: 'application/vnd.recordare.musicxml+xml' },
@@ -29,7 +31,12 @@ const FORMATS = [
     hint: 'NoteWorthy Composer 2.75에서 <b>파일 → 열기</b>로 엽니다. NWC에 없는 표기(셋잇단 외 잇단음표 등)는 가장 가까운 표기로 바뀝니다.' },
   { id: 'sibelius', group: 'apps', name: 'Sibelius', desc: 'MusicXML', icon: 'file', variants: XML_VARIANTS,
     hint: 'Sibelius 자체 형식(.sib)은 비공개라 다른 프로그램이 만들 수 없습니다. 대신 Sibelius가 바로 여는 MusicXML로 저장합니다 — Sibelius에서 <b>파일 → 열기</b>로 이 파일을 고르세요.' },
-  { id: 'finale', group: 'apps', name: 'Finale', desc: 'MusicXML', icon: 'file', variants: XML_VARIANTS,
+  { id: 'finale', group: 'apps', name: 'Finale', desc: '.musx · MusicXML', icon: 'file',
+    variants: [
+      { id: 'musx', label: '.musx (실험적)', ext: '.musx', mime: 'application/vnd.makemusic.notation',
+        hint: 'Finale 자체 형식으로 저장합니다 (<b>실험적</b> — Finale이 쓰는 파일 구조를 그대로 따라 만들었지만, 실제 Finale에서 열어 보는 것까지는 확인하지 못했습니다). Finale에서 <b>파일 → 열기</b>로 엽니다. 열리지 않으면 <b>.musicxml</b>로 저장해 Finale의 <b>파일 → 가져오기 → MusicXML</b>로 여세요.' },
+      ...XML_VARIANTS.map(v => ({ ...v, hint: 'Finale에서 <b>파일 → 가져오기 → MusicXML</b>로 엽니다. 가장 확실한 방법입니다.' })),
+    ],
     hint: 'Finale에서 <b>파일 → 가져오기 → MusicXML</b>로 엽니다.' },
   { id: 'musicxml', group: 'apps', name: 'MusicXML', desc: '그 밖의 프로그램', icon: 'file', variants: XML_VARIANTS,
     hint: '거의 모든 악보 프로그램이 읽는 공통 형식입니다.' },
@@ -37,7 +44,7 @@ const FORMATS = [
   { id: 'ssnap', group: 'other', name: 'JSE', desc: '.ssnap 원본', icon: 'save', mime: 'application/x-scoresnap', ext: '.ssnap' },
 ];
 /** Old format ids used by menus and settings → { format, variant }. */
-const ALIASES = { mxl: ['musicxml', 'mxl'], mscz: ['musescore', 'mscz'], mscx: ['musescore', 'mscx'], nwctxt: ['nwc', 'nwctxt'], nwc175: ['nwc', 'nwc175'] };
+const ALIASES = { mxl: ['musicxml', 'mxl'], mscz: ['musescore', 'mscz'], mscx: ['musescore', 'mscx'], nwctxt: ['nwc', 'nwctxt'], nwc175: ['nwc', 'nwc175'], musx: ['finale', 'musx'], finale: ['finale', 'musicxml'] };   // 'finale' (menus, settings) = MusicXML for Finale, as before 1.2
 
 function parseRange(text, count) {
   if (!text.trim()) return [...Array(count).keys()];
@@ -65,6 +72,9 @@ export async function exportDialog(app, ui, initial = null) {
   let variant = fmt.variants ? (fmt.variants.find(v => v.id === vid) || fmt.variants[0]) : null;
   const defDpi = [150, 300, 600].includes(+st.exportDpi) ? +st.exportDpi : 300;
   const pageCount = app.layout.pages.length;
+  // the name the field starts with: the one last chosen for this document, else its file name, else its title
+  const startBase = defaultFileBase({ lastName: app.exportName, fileName: app.fileName, title: app.score.meta.title });
+  const dest = saveDestination();
   const card = f => `<button class="card ${f.id === fmt.id ? 'on' : ''}" data-f="${f.id}">${icon(f.icon)}<b>${f.name}</b><span>${f.desc}</span></button>`;
   // compact cards so that every target and the options fit without much scrolling (3 per row, names only, on phones)
   const css = `<style>
@@ -79,6 +89,9 @@ export async function exportDialog(app, ui, initial = null) {
   </style>`;
   const body = `${css}<div class="exdlg">
     ${GROUPS.map(([g, title]) => `<h4>${title}</h4><div class="cards fmt-cards g-${g}">${FORMATS.filter(f => f.group === g).map(card).join('')}</div>`).join('')}
+    <h4><label for="ex-name">파일 이름</label></h4>
+    <div class="name-field"><input type="text" id="ex-name" value="${escapeXml(startBase)}" spellcheck="false" autocomplete="off" autocapitalize="off" enterkeyhint="done" maxlength="160" aria-describedby="ex-name-note"><span class="name-ext" id="ex-ext"></span></div>
+    <p class="name-note" id="ex-name-note" hidden></p>
     <div id="ex-opts">
       <h4>옵션</h4>
       <div class="row" data-for="variant"><label>파일 형식</label><div class="ctl"><div class="seg-btns" id="ex-variant"></div></div></div>
@@ -87,7 +100,6 @@ export async function exportDialog(app, ui, initial = null) {
       <div class="row" data-for="jpg"><label>JPG 품질</label><div class="ctl"><input type="range" id="ex-q" min="50" max="100" value="90"><span id="ex-qv">90</span></div></div>
       <div class="row" data-for="png"><label></label><div class="ctl"><label class="checkbox"><input type="checkbox" id="ex-transparent"> 투명 배경</label></div></div>
       <div class="row" data-for="multi"><label></label><div class="ctl"><label class="checkbox"><input type="checkbox" id="ex-zip" checked> 여러 페이지는 ZIP 하나로 묶기</label></div></div>
-      <div class="row"><label>파일 이름</label><div class="ctl"><input type="text" id="ex-name" value="${(app.score.meta.title || 'score').replace(/"/g, '')}"></div></div>
       <p id="ex-hint" style="margin:8px 0 0;color:var(--muted);line-height:1.55" hidden></p>
       <div class="progress" id="ex-prog" hidden><div></div></div>
     </div></div>`;
@@ -104,14 +116,44 @@ export async function exportDialog(app, ui, initial = null) {
     root.querySelector('[data-for=multi]').hidden = !(fmt.pages && fmt.id !== 'pdf' && pageCount > 1);
     const hintText = variant?.hint || fmt.hint || '';
     const hint = root.querySelector('#ex-hint'); hint.hidden = !hintText; hint.innerHTML = hintText;
+    syncName(root);
+  };
+  // how many files the export writes (pages of PNG/JPG/SVG without ZIP → one file per page)
+  const outCount = root => {
+    if (!fmt.pages || fmt.id === 'pdf') return 1;
+    const sel = root.querySelector('#ex-range').value;
+    if (sel === 'current') return 1;
+    if (sel === 'custom') return parseRange(root.querySelector('#ex-custom').value, pageCount).length || 1;
+    return pageCount;
+  };
+  // the extension after the name field follows the format, and a note says what happens to the typed name
+  const syncName = root => {
+    const count = outCount(root), zip = root.querySelector('#ex-zip').checked;
+    root.querySelector('#ex-ext').textContent = exportNameSuffix(variant?.ext || fmt.ext, { count, zip });
+    const typed = root.querySelector('#ex-name').value;
+    let msg = '', warn = false;
+    if (hasBadFileChars(typed)) { msg = `파일 이름에 쓸 수 없는 글자(${BAD_CHARS_TEXT})는 _ 로 바꿔 저장합니다.`; warn = true; }
+    else if (!cleanFileBase(typed)) msg = `이름을 비워 두면 "${startBase}"(으)로 저장합니다.`;
+    else if (dest === 'android') msg = `저장 위치: ${saveDestinationText(dest)} · 같은 이름의 파일이 있으면 이름 뒤에 번호가 붙습니다.`;
+    else if (dest === 'download') msg = `저장 위치: ${saveDestinationText(dest)}`;
+    const note = root.querySelector('#ex-name-note');
+    note.hidden = !msg; note.textContent = msg; note.classList.toggle('warn', warn);
   };
   const buttons = [{ label: '취소', value: null }];
   if (isMobileLayout() && navigator.share) buttons.push({ label: '공유', value: r => ({ share: true, root: r }) });
   buttons.push({ label: '내보내기', primary: true, value: r => ({ share: false, root: r }) });
-  const res = await showDialog({ title: '내보내기', body, wide: false, buttons, onOpen: root => {
+  // keyboard/mouse: start in the name field (type to rename, Enter to export); touch: focus nothing, so no keyboard pops up
+  const initialFocus = document.documentElement.classList.contains('touch') ? false : '#ex-name';
+  const res = await showDialog({ title: '내보내기', body, wide: false, buttons, initialFocus, onOpen: root => {
     sync(root);
     root.querySelectorAll('[data-f]').forEach(c => c.addEventListener('click', () => { fmt = FORMATS.find(f => f.id === c.dataset.f); variant = fmt.variants ? fmt.variants[0] : null; sync(root); }));
-    root.querySelector('#ex-range').addEventListener('change', e => { root.querySelector('#ex-custom').hidden = e.target.value !== 'custom'; });
+    root.querySelector('#ex-range').addEventListener('change', e => { root.querySelector('#ex-custom').hidden = e.target.value !== 'custom'; syncName(root); });
+    root.querySelector('#ex-custom').addEventListener('input', () => syncName(root));
+    root.querySelector('#ex-zip').addEventListener('change', () => syncName(root));
+    const nameInput = root.querySelector('#ex-name');
+    nameInput.addEventListener('input', () => syncName(root));
+    // the first tap/click selects the whole name, so typing replaces it (a second click places the caret)
+    nameInput.addEventListener('focus', () => { if (nameInput.dataset.picked) return; nameInput.dataset.picked = '1'; setTimeout(() => nameInput.select(), 0); });
     root.querySelectorAll('#ex-dpi button').forEach(b => b.addEventListener('click', () => root.querySelectorAll('#ex-dpi button').forEach(x => x.classList.toggle('on', x === b))));
     root.querySelector('#ex-q').addEventListener('input', e => { root.querySelector('#ex-qv').textContent = e.target.value; });
     root.querySelector('.card.on')?.scrollIntoView({ block: 'nearest' });
@@ -124,7 +166,7 @@ export async function exportDialog(app, ui, initial = null) {
   const quality = +r.querySelector('#ex-q').value / 100;
   const transparent = r.querySelector('#ex-transparent').checked;
   const zip = r.querySelector('#ex-zip').checked;
-  const base = r.querySelector('#ex-name').value || 'score';
+  const base = fileBaseFromInput(r.querySelector('#ex-name').value, startBase);
   const ext = variant?.ext || fmt.ext, mime = variant?.mime || fmt.mime;
   const busy = ui.toast(`${fmt.name} 파일 만드는 중…`, 'info', { timeout: 0 });
   try {
@@ -158,15 +200,22 @@ export async function exportDialog(app, ui, initial = null) {
           : new Blob([await m.exportNwc(app.score, variant.id === 'nwc175' ? { version: '1.75', warnings } : { warnings })], { type: mime });
         break;
       }
-      case 'sibelius': case 'finale': case 'musicxml': blob = await musicXmlBlob(app.score, variant); break;
+      case 'finale':
+        if (variant.id === 'musx') { const m = await import('../io/musx-write.js'); blob = new Blob([await m.exportMusx(app.score, { warnings })], { type: mime }); }
+        else blob = await musicXmlBlob(app.score, variant);
+        break;
+      case 'sibelius': case 'musicxml': blob = await musicXmlBlob(app.score, variant); break;
       case 'midi': blob = exportMidiBlob(app.score); break;
       case 'ssnap': blob = await writeSsnap(app.score, { thumbnailBlob: await ui.thumbnail(), appVersion: ui.version }); break;
     }
     busy.remove();
     const list = files || [{ name, blob }];
-    if (res.share) { const ok = await shareBlob(list[0].blob, list[0].name, app.score.meta.title).catch(() => false); if (ok) { ui.toast('공유했습니다', 'ok'); return; } }
-    for (const f of list) { const out = await saveBlob(f.blob, f.name, { mime: f.blob.type || mime, suggestDialog: list.length === 1 }); if (!out) return; }
+    if (res.share) { const ok = await shareBlob(list[0].blob, list[0].name, app.score.meta.title).catch(() => false); if (ok) { app.exportName = base; ui.toast('공유했습니다', 'ok'); return; } }
+    let out = null;
+    for (const f of list) { out = await saveBlob(f.blob, f.name, { mime: f.blob.type || mime, suggestDialog: list.length === 1 }); if (!out) return; }
+    app.exportName = base;   // the next export of this document starts with the same name
     const what = fmt.group === 'apps' && fmt.id !== 'musicxml' ? `${fmt.name}용 파일로` : `${fmt.name}로`;
-    ui.toast(`${what} 내보냈습니다 — ${list.length > 1 ? list.length + '개 파일' : list[0].name}${warnings.length ? ` · 참고: ${warnings.slice(0, 2).join(' · ')}${warnings.length > 2 ? ` 외 ${warnings.length - 2}건` : ''}` : ''}`, 'ok', { timeout: warnings.length ? 9000 : 2600 });
+    const where = list.length > 1 ? (dest === 'android' ? `${saveDestinationText(dest)}에 ${list.length}개 파일` : `${list.length}개 파일`) : savedFileLabel(out, list[0].name);
+    ui.toast(`${what} 내보냈습니다 — ${where}${warnings.length ? ` · 참고: ${warnings.slice(0, 2).join(' · ')}${warnings.length > 2 ? ` 외 ${warnings.length - 2}건` : ''}` : ''}`, 'ok', { timeout: warnings.length ? 9000 : 3600 });
   } catch (e) { busy.remove(); console.error(e); ui.toast('내보내기 실패: ' + e.message, 'error', { timeout: 6000 }); }
 }

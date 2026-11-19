@@ -1,6 +1,6 @@
 # JSE — 작업 인계 문서 (Handoff)
 
-> 갱신: 2026-11-18 KST (v1.1.0 — 글꼴 · 다른 악보 프로그램 파일 · 설정, §5). 다음 모델/세션은 이 문서 → `README.md` → `SPEC.md` → `RELEASING.md` 순서로 읽으면 됩니다.
+> 갱신: 2026-11-19 KST (v1.2.0 — 내보내기 파일 이름 · Finale `.musx` 저장, §6 / v1.1.0 — 글꼴 · 다른 악보 프로그램 파일 · 설정, §5). 다음 모델/세션은 이 문서 → `README.md` → `SPEC.md` → `RELEASING.md` 순서로 읽으면 됩니다.
 > 소스: **GitHub `omokdie/jse` (공개, main)** — 이 저장소가 원본입니다. 클라우드 세션의 작업 폴더는 `/home/claude/scoresnap`(origin = 위 저장소).
 
 ## 1. 사용자 요구사항 (반영 상태)
@@ -20,7 +20,7 @@
 | 11 | 이름 JSE | ✅ (내부 식별자는 `scoresnap` 유지, SPEC 머리말) |
 | 12 | 아이콘: "JSE" 글자 + 오선 | ✅ |
 | 13 | 상단 버튼 정리 (Adobe식) | ✅ + **포토샵식 묶음 버튼**(마우스를 올리면 종류 선택: 온음표~64분음표, 온쉼표~64분쉼표 등) |
-| 14 | Finale `.musx` 파일 열기 | ✅ `io/musx.js` (실제 Finale 파일 1,373개 오류 없이 가져오기) |
+| 14 | Finale `.musx` 파일 열기 | ✅ `io/musx.js` (실제 Finale 파일 1,373개 오류 없이 가져오기). v1.2.0에서 쪽 나눔·타악기 배치·셈여림 등 더 정확히 |
 | 15 | 이음줄 선택·적용이 어려움, 음표가 포인터와 다른 곳에 들어감 | ✅ 모양 도구(음표→음표 끌기, 클릭 선택+핸들), 음표 입력 시 놓일 자리 미리보기 |
 | 16 | 쉼표 종류별 입력 | ✅ 팔레트·옵션 바·휴대폰 입력 바 모두 |
 | 17 | 사진 인식에서 한국어 가사 읽기 | ✅ `omr/lyrics.js` + `omr/hangul.js` (§4) |
@@ -30,6 +30,8 @@
 | 21 | 가사·제목·코드의 글꼴 크기와 종류 변경 | ✅ v1.1.0 — 악보 → 글꼴…(휴대폰 ⋯ 메뉴), 글자 오른쪽 클릭 → 글꼴 바꾸기…, 속성 패널. 글자 종류 11가지 × 글꼴·크기(pt)·굵게·기울임, 글자 하나만 따로, 새 악보 기본값. 글꼴: 기본 · 이 기기의 글꼴 · JSE 글꼴 7종(처음 쓸 때 내려받음). SPEC §2b, `tools/fonts/README.md` |
 | 22 | Sibelius·MuseScore·NWC 등 다른 프로그램 파일 열기 + 각 프로그램 확장자로 저장 | ✅ v1.1.0 — MuseScore `.mscz/.mscx` 열기·저장, NWC `.nwc/.nwctxt` 열기·저장(1.75 저장은 실험적). 🔶 Sibelius `.sib`는 직접 읽고 쓸 수 없음(비공개·암호화 형식) → MusicXML 경유 안내 + "Sibelius용 (MusicXML)" 내보내기. SPEC §5d–5f, §5 아래 검증 결과 |
 | 23 | 설정을 더 자세하고 편하게, 플랫폼별로 | ✅ v1.1.0 — 검색되는 설정 창(약 70개 항목, 13개 구역), Windows 앱·Android 앱·웹 앱 전용 구역. SPEC §9, `tools/settings/README.md` |
+| 24 | 내보낼 때 파일 이름 바꾸기 | ✅ v1.2.0 — 내보내기 창의 '파일 이름' 칸을 형식 바로 아래로, 확장자 표시, 마지막 이름 기억, 쓸 수 없는 글자 안내. Android·저장 창 없는 브라우저: 저장 위치 안내 + '다른 이름으로 저장'에서 이름 묻기. SPEC §5f |
+| 25 | `.musx` 읽기 + `.musx`로 내보내기 | ✅ 읽기(v1.0.x부터) / 🔶 저장 v1.2.0 — Finale 26·27 형식, **실험적**(실제 Finale에서는 아직 열어 보지 못함). SPEC §5b, `tools/musx/README.md`, 아래 §6 |
 
 결정 사항: 확장자는 `.ssnap` 유지(`.jse`는 Windows JScript 확장자라 사용 불가). 저장소는 공개(무료 Pages + 자동 업데이트에 필요).
 
@@ -39,7 +41,7 @@
 - 편집 상호작용: `editor/tools.js`(도구 정의·입력 위치 계산·모양/아티큘레이션/표현 적용), `editor/pointer.js`(도구별 마우스/터치), `editor/keyboard.js`(피날레식 단축키·메타툴). 묶음 버튼: `ui/flyout.js` + `ui/groups.js`, 팔레트 `ui/palette.js`.
 - 인식: `omr/omr.js`(auto: 기존 파이프라인 → 신뢰도 0.9 미만이면 사진 파이프라인도 실행해 더 나은 결과), 단계별 모듈 `preprocess/staves/dewarp/barlines/heads/classifiers/lyrics/hangul.js`, 학습된 모델 `omr/models/heads.js`(음표머리), `omr/hangul-weights.js`(한글). 흐름 UI `ui/omrflow.js`.
 - 음원: `audio/engine.js`(디코드→분석→정리), `audio/basicpitch.js`+`tfgraph.js`+`wasmconv.js`(Basic Pitch 실행), `audio/transcribe.js`(빠르기·박자·조성·양자화·코드 → ScoreDoc), `audio/keymodel.js`, 모델 `vendor/basic-pitch/`. 흐름 UI `ui/audioflow.js`.
-- 입출력: `io/ssnap.js`(+ `sniffFile`, `FOREIGN_SCORE_FORMATS`), `io/musicxml.js`, `io/musx.js`(Finale), `io/mscz.js`(MuseScore), `io/nwc.js` + `io/nwc-*.js`(NWC), `io/midi.js`(재생 목록 + MIDI), `io/export.js`, `io/storage.js`. 다른 프로그램 파일 열기 흐름 `ui/importflow.js`, 내보내기 대화상자 `ui/exportdlg.js`.
+- 입출력: `io/ssnap.js`(+ `sniffFile`, `FOREIGN_SCORE_FORMATS`), `io/musicxml.js`, `io/musx.js`(Finale 읽기) + `io/musx-write.js`·`musx-defaults.js`(Finale 쓰기), `io/filename.js`(내보내기·저장 파일 이름), `io/mscz.js`(MuseScore), `io/nwc.js` + `io/nwc-*.js`(NWC), `io/midi.js`(재생 목록 + MIDI), `io/export.js`, `io/storage.js`. 다른 프로그램 파일 열기 흐름 `ui/importflow.js`, 내보내기 대화상자 `ui/exportdlg.js`.
 - 글꼴: `model/textstyles.js`(글자 종류·기본값·pt↔sp) → `engrave/styles.js` → 조판, `fonts.js`(기기 글꼴·JSE 글꼴 내려받기·IndexedDB·SVG에 담기), `ui/textstyle.js`. 글꼴 파일 `app/fonts/web/`는 **GitHub Pages에서만** 제공(설치 파일·APK·OTA 묶음·서비스 워커 캐시에는 없음).
 - 설정: `settings.js`(항목 목록·플랫폼 조건·기본값·이전 값 옮기기) + `ui/settings.js`. 값은 `localStorage['ssnap.settings']`, Windows 셸은 필요한 값의 사본을 자기 `settings.json`에 둠.
 - 배포: `.github/workflows/` — `build-web.yml`(main push → Pages), `release.yml`(main 에 새 버전 → 태그·릴리스·exe·apk 자동). 이 클라우드 세션에서는 **태그 push가 막혀 있음**(브랜치 push만 가능) → 버전 올려 main 에 push 하는 방식으로 릴리스.
@@ -48,12 +50,13 @@
 ## 3. 테스트 / 검증 방법
 
 ```bash
-node --test tools/tests/*.test.js                  # 112개 통과 (편집·MusicXML·MuseScore·NWC·글꼴·설정·재생·셸·한글/가사 인식·음원)
+node --test tools/tests/*.test.js                  # 141개 통과 (편집·MusicXML·MuseScore·NWC·Finale·파일 이름·글꼴·설정·재생·셸·한글/가사 인식·음원)
 python3 -m http.server 8765 -d app                  # 앱 실행
 node tools/e2e/shot.mjs http://localhost:8765/ out.png desktop|mobile|tablet|tablet-portrait|android-tablet [script.js]
 node tools/musx/check.mjs <Finale 파일/폴더>        # Finale 가져오기 일괄 점검
 node tools/mscz/check.mjs <폴더> [--export]         # MuseScore 가져오기(+ 내보내고 다시 읽기). 실제 MuseScore 대조: tools/mscz/README.md (roundtrip.mjs, compare.mjs)
 node tools/nwc/check.mjs <폴더> [--export]          # NWC 가져오기(+ 세 가지 형식으로 내보내고 다시 읽기)
+node tools/musx/compare.mjs --roundtrip <폴더>      # .musx로 저장 → 다시 읽어 항목별 대조. denigma 대조: tools/musx/README.md
 node tools/settings/…  ·  tools/fonts/e2e/…        # 설정·글꼴 브라우저 점검 스크립트(shot.mjs 로 실행, 각 README)
 node tools/omr/stage_eval.mjs --dir tools/omr/corpus/eval_photo   # 사진 인식 정확도 (eval_clean, base, aug 도)
 node tools/omr/run_eval.mjs --dir tools/omr/corpus_ko --report tools/omr/eval_report_lyrics.md   # 가사 인식
@@ -135,7 +138,32 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 * 설정: 묶음 버튼(`ui/flyout.js`)에는 길게 누르기 시간·진동 설정이 적용되지 않음. 설명 문구는 한국어만.
 * 2026-11-17 작업 중 MuseScore 담당 보조 작업이 사용량 한도로 중단됨 — 코드·테스트·README는 끝난 상태였고, 최종 대조는 본 세션이 다시 실행해 위 숫자를 얻음.
 
-남은 일(우선순위):
+
+## 6. v1.2.0 — 내보내기 파일 이름 · Finale `.musx` 저장 (2026-11-19)
+
+**사용자 요청(11-19 06:20)**: "내보내기할 때 파일명 변경이 가능하게 해주고 .musx파일도 읽고 내보내기할 수 있게 해줘". 같은 날 "윈도우 자동 업데이트에 안 뜬다"는 문의도 있었음 → v1.1.0 릴리스(최신 지정, `latest.yml` 1.1.0, exe SHA-512 일치)는 정상이었고, 설치된 1.0.8의 업데이트 코드(켤 때 8초 뒤·4시간마다 확인, 자동 다운로드, 닫을 때 설치)도 문제 없음을 확인. 사용자에게 도움말 → 정보/업데이트 확인으로 확인하도록 안내함(원인이 사용자 쪽에서 확인되지 않았음 — 다음에 같은 문의가 오면 `%APPDATA%\JSE\logs\main.log`의 electron-updater 기록을 보면 됨).
+
+**파일 이름**: '파일 이름' 칸은 1.0.0부터 내보내기 창 맨 아래에 있었지만 눈에 띄지 않았고, Android는 저장 창 없이 다운로드/JSE에 바로 저장해 '다른 이름으로 저장'도 이름을 바꿀 수 없었음. → `io/filename.js` + 내보내기 창/다른 이름으로 저장 개선(SPEC §5f). 브라우저 확인: PC(저장 창 없는 브라우저)·휴대폰(가짜 Android 셸: 저장 경로·중복 번호·다른 이름으로 저장) 모두 통과. Windows 앱은 전처럼 Windows 저장 창에서도 이름을 바꿀 수 있음.
+
+**`.musx` 저장 확인** (보조 작업이 만들고, 본 세션이 따로 다시 확인)
+
+| 확인 | 결과 |
+|---|---|
+| 자체 왕복(저장 → JSE로 다시 읽기, `tools/musx/compare.mjs --roundtrip`) | Finale 1,373/1,373(항목별 완전 일치 1,345, 음표 100 %) · NWC 633 · MusicXML 379 · MuseScore 5,968 — 실패 0 |
+| 본 세션의 별도 대조(`/tmp/jse-work/main/musx-rt-indep.mjs`, 마디·보표별 음표·가사) | Finale 1,373곡 음표 수 245,628 그대로, 1,370곡 완전 일치(99.96 %) · NWC 표본 212/212 · 가곡 표본 212/222(99.91 %) · MuseScore 4 시험 파일 표본 640/662 |
+| 독립 판독기 denigma(Robert Patterson의 musxdom, 소스에서 빌드: `/tmp/jse-work/musx/ext/denigma/build/build/Release/denigma`) | 내보낸 파일 전부 읽음(음표 99.7~99.9 %). 문제 파일은 모두 원본의 넘치는 마디·끝나지 않은 잇단음표 등으로 추적. 본 세션 표본 3곡: MNX 검증 통과, 음표 100 % 일치 |
+| 앱 화면(내보내기 창 → `.musx` → 다시 열기) | 예제·MuseScore·NWC·Finale(타악기·피아노) 5곡 모두 같음 |
+| **실제 Finale에서 열기** | **못 함**(Finale 없음) → 내보내기 창에 "실험적" 표시. MuseScore도 `.musx`를 읽지 못함(4.7.7·master 확인) |
+
+* 형식: Finale 26.1로 선언(Finale 27 예제 1,373개 중 1,208개가 26.1). Finale 26·27 대상, 25 이하는 대상 아님. 전역 기록은 Finale 기본 문서의 설정 값에서 생성(`tools/musx/gen-defaults.mjs` → `musx-defaults.js`), Finale 파일 자체는 넣지 않음.
+* 판독기(`musx.js`)도 함께 바뀜 — 쪽 나눔, 세로줄 없음, 쉼표 위 빔, 음표별 머리 모양, 페르마타 위치, 셈여림 그대로, 보이는 조로 코드 이름, 중간의 못갖춘마디, 타악기 배치(Finale 타악기 레이아웃) 등. 모두 테스트 있음(`tools/tests/musx.test.js` 20개). 예전에 가져와 저장한 `.ssnap`은 그대로이고, 원본 `.musx`를 다시 열면 새 방식으로 읽힘.
+* 크기: `musx-write.js` 98 KB + `musx-defaults.js` 57 KB(압축 약 44 KB), 내보낼 때만 불러옴.
+* 알려진 한계: 연결된 파트, 지판 그림, 일반 보표의 동그라미 X 머리는 쓰지 않음, 섞인 겹잇단음표, 쪽 배치는 추정(Finale가 다시 배치), 아래 성부의 선은 음표에 붙임(Finale 예제에 같은 경우가 없어 가장 덜 검증됨).
+* 다음에 할 것: 실제 Finale 26/27에서 내보낸 파일 몇 개 열어 보기 → 문제 없으면 "실험적" 떼기.
+* Android 네이티브 코드는 바뀌지 않음 → `androidMinNative` 1.1.0 유지(웹 묶음 OTA로 전달). Windows는 설치 파일 업데이트.
+
+## 7. 남은 일(우선순위)
+
 1. 사진 인식(목표 90%; 6차 후 holdout6 사진 음높이 88.3%·박자 87.1%, 스캔 95.5 · 평평 93.5 · 휜 90.9 · 저해상도 68.2%, 더 어려운 holdout5 사진 77.6%). 학습은 6차로 멈춤 — 이어서 한다면 `tools/omr/IMPROVEMENTS.md` 'Where to continue'부터. 남은 순서: 저해상도 사진(잃은 음의 절반, 음높이 45%) → 휜/평평 사진의 마디 안 임시표(48%)·화음 → 조표(87%) → 음자리표 → Leland 글꼴(holdout5 41%) → 16/32분·셋잇단·마디선. 상세: `tools/omr/IMPROVEMENTS.md`.
 2. 가사: 영어 가사(단어·하이픈), 오선 위 가사, 10px 이하 가는 글씨(이진화에서 사라짐), 줄 단위 언어 모델.
 3. Windows 코드 서명 인증서(없으면 SmartScreen 경고). 남은 Node 20 액션 경고(android-actions/setup-android, gradle/actions, softprops/action-gh-release, Pages 액션).
@@ -143,3 +171,4 @@ node tools/audio/eval.mjs …                        # 음원 → 악보 평가 
 5. 음원 → 악보: 실제 녹음+정렬된 악보로 평가, 빠르기 절반/두 배 판단 개선(다운비트 단서, 박자 두드리기), 보표당 두 번째 성부(지속음), 마이크 녹음, 멜로디만 있는 입력의 코드 추정.
 6. 세부: 운지 번호 전용 렌더링, 복잡한 반복 재생, MIDI 가져오기, 가사 아래 이음줄 충돌 회피.
 7. v1.1.0의 남은 것: §5 "알려진 한계" 목록, 실제 Windows·Android 기기에서 설정 항목 점검.
+8. v1.2.0의 남은 것: 실제 Finale에서 `.musx` 열어 보기(§6), Android 저장 시 같은 이름 덮어쓰기(지금은 MediaStore가 "이름 (1)"로 새로 만듦 — 네이티브 변경 필요).

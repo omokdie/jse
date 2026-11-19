@@ -13,8 +13,8 @@
 | 악보 요소 | 가사(여러 절, 한글은 글자마다 자동 배치), 코드 기호 + 기타 코드 다이어그램, 드럼 보표(드럼 패드 입력), 기타 TAB, 셈여림·헤어핀, 아티큘레이션·꾸밈음, 템포, 리허설 마크, 도돌이표·1/2번 괄호·D.S./D.C./Coda, 줄/페이지 나눔, 머리 모양 |
 | 글꼴 | **제목·부제·작곡가·작사가·가사·코드·일반 글자·빠르기·리허설 마크·악기 이름·마디 번호**마다 글꼴 종류와 크기(pt)·굵게·기울임을 바꿈(악보 → 글꼴…, 글자 오른쪽 클릭, 속성 패널). 바꾸는 대로 악보에 바로 보이고, 글자 하나만 따로 바꾸거나 새 악보 기본값으로 저장 가능. 글꼴은 기본 · 이 기기의 글꼴 · **JSE 글꼴**(나눔명조·나눔고딕·나눔손글씨 펜·고운바탕·고운돋움·Old Standard·Libertinus, 처음 쓸 때 내려받음) 중에서 고르고, PDF·이미지로 내보낼 때 함께 담김 |
 | 편의 | 포토샵식 묶음 버튼(마우스를 올리면 온음표~64분음표, 온쉼표~64분쉼표 등 종류 선택), 복사/잘라내기/붙여넣기, 선택 범위 끌어서 복사, 반복(R), 실행 취소/다시 실행, 상황별 옵션 바(Adobe 방식), 우클릭/길게 누르기 메뉴, 보기 방식 5가지(한 페이지·세로·가로·**여러 페이지 한눈에**·화면 맞춤), 페이지 썸네일, 재생+메트로놈, 자동 저장, 초보자용 간단 모드 |
-| 파일 | 전용 형식 `.ssnap`(원본 사진 포함), 내보내기 PDF · PNG · JPG · SVG · MusicXML · MXL · MIDI |
-| 다른 악보 프로그램 | **열기**: MuseScore(`.mscz` `.mscx`, 2~4 버전) · NWC(`.nwc` 1.55~2.75, `.nwctxt`, 옛 파일의 한글 자동 판별) · Finale(`.musx`) · MusicXML/MXL. **저장**: MuseScore(`.mscz` `.mscx`) · NWC(`.nwc` 2.75, `.nwctxt`, 옛 1.75는 실험적) · Sibelius/Finale/그 밖의 프로그램용 MusicXML. Sibelius(`.sib`)처럼 형식이 공개되지 않은 파일은 그 프로그램에서 MusicXML로 내보내는 방법을 안내 |
+| 파일 | 전용 형식 `.ssnap`(원본 사진 포함), 내보내기 PDF · PNG · JPG · SVG · MusicXML · MXL · MIDI. 내보내기 창에서 **파일 이름**을 바로 바꿈(확장자 표시, 쓸 수 없는 글자 안내, 문서마다 마지막 이름 기억). 저장 창이 없는 Android·브라우저에서는 저장 위치를 알려 주고 '다른 이름으로 저장'에서 이름을 물음 |
+| 다른 악보 프로그램 | **열기**: MuseScore(`.mscz` `.mscx`, 2~4 버전) · NWC(`.nwc` 1.55~2.75, `.nwctxt`, 옛 파일의 한글 자동 판별) · Finale(`.musx` `.ftmx`, 2014~27) · MusicXML/MXL. **저장**: MuseScore(`.mscz` `.mscx`) · NWC(`.nwc` 2.75, `.nwctxt`, 옛 1.75는 실험적) · Finale(`.musx` — Finale 26·27 형식, 실험적: 실제 Finale에서는 아직 열어 보지 못함) · Sibelius/Finale/그 밖의 프로그램용 MusicXML. Sibelius(`.sib`)처럼 형식이 공개되지 않은 파일은 그 프로그램에서 MusicXML로 내보내는 방법을 안내 |
 | 설정 | 검색되는 설정 창(PC: 두 칸 창, 휴대폰: 쪽 단위 화면) — 화면·편집·새 악보 기본값·재생·인식·파일·업데이트, 그리고 **기기별 항목**: Windows 앱(창 크기·위치 기억, 닫을 때 저장 확인, 기본 폴더, 화면 요소 크기 …), Android 앱(화면 켜짐 유지, 전체 화면, 화면 방향, 뒤로 버튼, 진동), 웹 앱(앱으로 설치, 저장 공간, 오프라인 캐시). 설정 내보내기·가져오기·초기화 |
 | 업데이트 | 인터넷 연결 시 자동 업데이트 후 "업데이트 완료" 표시 (웹·Windows·Android 모두) |
 | 디자인 | 리퀴드 글라스 UI, 다크 모드, 직접 그린 아이콘, Windows용 유리 버튼 창 조절(최소화·최대화·닫기) |
@@ -63,8 +63,9 @@ SPEC.md         기술 명세 (데이터 형식, 파일 형식, 업데이트 프
 ## 테스트
 
 ```bash
-node --test tools/tests/*.test.js          # 편집 명령 · MusicXML/MuseScore/NWC · 글꼴 · 설정 · 재생 · 가사 인식 (112개)
+node --test tools/tests/*.test.js          # 편집 명령 · MusicXML/MuseScore/NWC/Finale · 파일 이름 · 글꼴 · 설정 · 재생 · 가사 인식 (141개)
 node tools/musx/check.mjs <폴더>           # Finale 파일 일괄 가져오기 점검
+node tools/musx/compare.mjs --roundtrip <폴더>   # .musx로 저장 → 다시 읽어 대조 (denigma 대조는 tools/musx/README.md)
 node tools/mscz/check.mjs <폴더> --export  # MuseScore 파일 가져오기·내보내기 점검 (실제 MuseScore 대조: tools/mscz/README.md)
 node tools/nwc/check.mjs <폴더>            # NWC 파일 가져오기·내보내기 점검 (tools/nwc/README.md)
 node tools/omr/run_eval.mjs                # 악보 인식 정확도 평가 (합성 악보 120장)
